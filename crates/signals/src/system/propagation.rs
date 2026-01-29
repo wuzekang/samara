@@ -8,10 +8,11 @@ impl super::ReactiveSystem {
         let mut first_inserted_index = insert_index;
 
         loop {
-            while insert_index >= self.queued.len() {
-                self.queued.push(None);
+            if insert_index >= self.queued.len() {
+                self.queued.push(effect);
+            } else {
+                self.queued[insert_index] = effect;
             }
-            self.queued[insert_index] = Some(effect);
             insert_index += 1;
             let subs = self.nodes[effect].subs;
             let Some(subs) = subs else {
@@ -28,10 +29,8 @@ impl super::ReactiveSystem {
             insert_index -= 1;
             insert_index
         } {
-            let left = self.queued[first_inserted_index];
-            self.queued[first_inserted_index] = self.queued[insert_index];
+            self.queued.swap(first_inserted_index, insert_index);
             first_inserted_index += 1;
-            self.queued[insert_index] = left;
         }
     }
 
@@ -50,7 +49,7 @@ impl super::ReactiveSystem {
     pub fn propagate(&mut self, link: LinkKey) {
         let mut link = link;
         let mut next = self.links[link].next_sub;
-        self.propagate_stack.clear();
+        self.stack.clear();
         'top: loop {
             let sub_key = self.links[link].sub;
             let sub = &mut self.nodes[sub_key];
@@ -87,7 +86,9 @@ impl super::ReactiveSystem {
                     let next_sub = self.links[subs].next_sub;
                     link = subs;
                     if let Some(next_sub_val) = next_sub {
-                        self.propagate_stack.push(next);
+                        if let Some(next_val) = next {
+                            self.stack.push(next_val);
+                        }
                         next = Some(next_sub_val);
                     }
                     continue 'top;
@@ -100,7 +101,7 @@ impl super::ReactiveSystem {
                 continue 'top;
             }
 
-            if let Some(Some(l)) = self.propagate_stack.pop() {
+            while let Some(l) = self.stack.pop() {
                 link = l;
                 next = self.links[link].next_sub;
                 continue 'top;
@@ -114,7 +115,7 @@ impl super::ReactiveSystem {
     pub fn check_dirty(&mut self, mut link: LinkKey, mut sub: NodeKey) -> bool {
         let mut check_depth = 0;
         let mut dirty = false;
-        self.check_dirty_stack.clear();
+        self.stack.clear();
         'top: loop {
             let dep = self.links[link].dep;
             let flags = self.nodes[dep].flags;
@@ -131,7 +132,7 @@ impl super::ReactiveSystem {
                 }
             } else if flags.contains(ReactiveFlags::MUTABLE | ReactiveFlags::PENDING) {
                 if self.links[link].next_sub.is_some() || self.links[link].prev_sub.is_some() {
-                    self.check_dirty_stack.push(link);
+                    self.stack.push(link);
                 }
                 link = self.nodes[dep].deps.unwrap();
                 sub = dep;
@@ -152,7 +153,7 @@ impl super::ReactiveSystem {
                 let has_multiple_subs = self.links[first_sub].next_sub.is_some();
 
                 if has_multiple_subs {
-                    link = self.check_dirty_stack.pop().unwrap();
+                    link = self.stack.pop().unwrap();
                 } else {
                     link = first_sub;
                 }

@@ -2,8 +2,7 @@ impl super::ReactiveSystem {
     /// Flush all queued effects
     pub fn flush(&mut self) {
         while self.notify_index < self.queued_length {
-            let effect = self.queued[self.notify_index].unwrap();
-            self.queued[self.notify_index] = None;
+            let effect = self.queued[self.notify_index];
             self.notify_index += 1;
             self.run(effect);
         }
