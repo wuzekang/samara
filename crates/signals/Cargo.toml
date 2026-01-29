@@ -1,0 +1,24 @@
+[package]
+name = "samara-signals"
+version = { workspace = true }
+edition = "2024"
+authors = ["wuzekang"]
+description = "A high-performance signal library for Rust"
+repository = "https://github.com/wuzekang/samara"
+license = "MIT"
+keywords = ["signal", "alien", "event", "reactive", "observer"]
+categories = ["asynchronous", "concurrency", "data-structures", "rust-patterns"]
+
+[dependencies]
+slotmap = "1.1.1"
+futures-channel = "0.3"
+futures-core = "0.3"
+futures-util = "0.3"
+
+[dev-dependencies]
+criterion = { version = "0.7", features = ["html_reports"] }
+tokio = { version = "1.49.0", features = ["full"] }
+
+[[bench]]
+name = "propagate"
+harness = false
