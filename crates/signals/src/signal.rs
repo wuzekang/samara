@@ -1,3 +1,4 @@
+use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::ops::{AddAssign, Deref, DerefMut};
 
@@ -7,6 +8,15 @@ use crate::types::NodeKey;
 pub struct Signal<T> {
     node: NodeKey,
     _marker: PhantomData<T>,
+}
+
+impl<T> Debug for Signal<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Signal")
+            .field("node", &self.node)
+            .field("_marker", &self._marker)
+            .finish()
+    }
 }
 
 impl<T> Clone for Signal<T> {
@@ -30,8 +40,86 @@ impl<T: 'static + Clone> Signal<T> {
     pub fn get(&self) -> T {
         REACTIVE_SYSTEM.with(|ctx| unsafe {
             let ctx = &mut *ctx.get();
+            ctx.signal_track(self.node);
             ctx.signal_get::<T>(self.node)
         })
+    }
+
+    pub fn get_untracked(&self) -> T {
+        REACTIVE_SYSTEM.with(|ctx| unsafe {
+            let ctx = &mut *ctx.get();
+            ctx.signal_get::<T>(self.node)
+        })
+    }
+}
+
+impl<T: 'static> Signal<T> {
+    pub fn new(initial: T) -> Self {
+        let node = REACTIVE_SYSTEM.with(move |ctx| unsafe {
+            let ctx = &mut *ctx.get();
+            ctx.signal_new(initial)
+        });
+        Self {
+            node,
+            _marker: PhantomData,
+        }
+    }
+
+    pub fn set(&self, value: T) {
+        REACTIVE_SYSTEM.with(move |ctx| unsafe {
+            let ctx = &mut *ctx.get();
+            ctx.signal_set::<T>(self.node, value)
+        });
+    }
+
+    pub fn track(&self) {
+        REACTIVE_SYSTEM.with(|ctx| unsafe {
+            let ctx = &mut *ctx.get();
+
+            // Track dependencies
+            ctx.signal_track(self.node);
+        });
+    }
+
+    pub fn peek(&self) -> SignalReadGuard<'_, T> {
+        let node = self.node;
+        REACTIVE_SYSTEM.with(|ctx| unsafe {
+            let ctx = &mut *ctx.get();
+            // Check borrow but don't track dependencies
+            ctx.signal_borrow_read_check(node);
+        });
+        SignalReadGuard {
+            node,
+            _marker: PhantomData,
+        }
+    }
+
+    pub fn read(&self) -> SignalReadGuard<'_, T> {
+        SignalReadGuard::new(self.node)
+    }
+
+    pub fn write(&self) -> SignalWriteGuard<'_, T> {
+        SignalWriteGuard::new(self.node)
+    }
+
+    pub fn with<O>(&self, f: impl FnOnce(&T) -> O) -> O {
+        REACTIVE_SYSTEM.with(|ctx| unsafe {
+            let ctx = &mut *ctx.get();
+            ctx.signal_with(self.node, f)
+        })
+    }
+
+    pub fn update(&self, f: impl FnOnce(&mut T)) {
+        REACTIVE_SYSTEM.with(|ctx| unsafe {
+            let ctx = &mut *ctx.get();
+            ctx.signal_update(self.node, f);
+        });
+    }
+}
+
+impl Signal<bool> {
+    pub fn toggle(&self) {
+        self.update(|value| *value = !*value);
     }
 }
 
@@ -137,54 +225,6 @@ impl<T> Deref for SignalReadGuard<'_, T> {
             ctx.signal(self.node).value
         });
         unsafe { &*(value as *const T) }
-    }
-}
-
-impl<T: 'static> Signal<T> {
-    pub fn new(initial: T) -> Self {
-        let node = REACTIVE_SYSTEM.with(move |ctx| unsafe {
-            let ctx = &mut *ctx.get();
-            ctx.signal_new(initial)
-        });
-        Self {
-            node,
-            _marker: PhantomData,
-        }
-    }
-
-    pub fn set(&self, new_value: T) {
-        REACTIVE_SYSTEM.with(move |ctx| unsafe {
-            let ctx = &mut *ctx.get();
-            ctx.signal_set::<T>(self.node, new_value)
-        });
-    }
-
-    pub fn peek(&self) -> SignalReadGuard<'_, T> {
-        let node = self.node;
-        REACTIVE_SYSTEM.with(|ctx| unsafe {
-            let ctx = &mut *ctx.get();
-            // Check borrow but don't track dependencies
-            ctx.signal_borrow_read_check(node);
-        });
-        SignalReadGuard {
-            node,
-            _marker: PhantomData,
-        }
-    }
-
-    pub fn read(&self) -> SignalReadGuard<'_, T> {
-        SignalReadGuard::new(self.node)
-    }
-
-    pub fn write(&self) -> SignalWriteGuard<'_, T> {
-        SignalWriteGuard::new(self.node)
-    }
-
-    pub fn update(&self, f: impl FnOnce(&mut T)) {
-        REACTIVE_SYSTEM.with(|ctx| unsafe {
-            let ctx = &mut *ctx.get();
-            ctx.signal_update(self.node, f);
-        });
     }
 }
 

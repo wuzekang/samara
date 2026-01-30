@@ -127,7 +127,7 @@ async fn test_nested_spawn() {
 #[tokio::test]
 async fn test_async_with_computed() {
     let source = signal(10);
-    let comp = computed(move || source.get() * 2);
+    let comp = computed(move |_| source.get() * 2);
     let result = signal(0);
 
     spawn(async move {

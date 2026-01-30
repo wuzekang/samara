@@ -52,22 +52,22 @@ runtime: node 22.17.0 (arm64-darwin)
 ### Rust (Criterion)
 
 ```md
-1 * 1                   time:   [42.656 ns 42.974 ns 43.331 ns]
-1 * 10                  time:   [248.55 ns 249.21 ns 249.91 ns]
-1 * 100                 time:   [1.8878 µs 1.9029 µs 1.9230 µs]
-1 * 1000                time:   [21.002 µs 21.146 µs 21.303 µs]
-10 * 1                  time:   [356.37 ns 359.19 ns 362.78 ns]
-10 * 10                 time:   [2.1833 µs 2.1900 µs 2.1972 µs]
-10 * 100                time:   [23.719 µs 23.789 µs 23.862 µs]
-10 * 1000               time:   [227.03 µs 227.59 µs 228.17 µs]
-100 * 1                 time:   [3.5748 µs 3.5856 µs 3.5973 µs]
-100 * 10                time:   [25.508 µs 25.580 µs 25.660 µs]
-100 * 100               time:   [250.30 µs 251.80 µs 253.55 µs]
-100 * 1000              time:   [2.2859 ms 2.3053 ms 2.3277 ms]
-1000 * 1                time:   [40.681 µs 40.884 µs 41.202 µs]
-1000 * 10               time:   [251.59 µs 252.23 µs 252.90 µs]
-1000 * 100              time:   [2.7178 ms 2.7508 ms 2.7872 ms]
-1000 * 1000             time:   [24.085 ms 24.332 ms 24.679 ms]
+1 * 1                   time:   [38.909 ns 39.271 ns 39.671 ns]
+1 * 10                  time:   [245.73 ns 246.87 ns 248.04 ns]
+1 * 100                 time:   [2.0650 µs 2.0706 µs 2.0766 µs]
+1 * 1000                time:   [21.029 µs 21.217 µs 21.430 µs]
+10 * 1                  time:   [347.47 ns 351.07 ns 355.92 ns]
+10 * 10                 time:   [2.2159 µs 2.3328 µs 2.4929 µs]
+10 * 100                time:   [24.907 µs 25.273 µs 25.694 µs]
+10 * 1000               time:   [219.27 µs 220.58 µs 222.40 µs]
+100 * 1                 time:   [3.3235 µs 3.3657 µs 3.4206 µs]
+100 * 10                time:   [25.614 µs 25.891 µs 26.192 µs]
+100 * 100               time:   [250.48 µs 251.69 µs 253.44 µs]
+100 * 1000              time:   [2.1764 ms 2.2486 ms 2.3410 ms]
+1000 * 1                time:   [38.952 µs 39.249 µs 39.584 µs]
+1000 * 10               time:   [244.16 µs 245.34 µs 246.71 µs]
+1000 * 100              time:   [2.5920 ms 2.5996 ms 2.6079 ms]
+1000 * 1000             time:   [22.838 ms 23.110 ms 23.476 ms]
 ```
 
 ## Installation
@@ -87,7 +87,7 @@ samara_signals = "0.1"
 use samara_signals::{signal, computed, effect};
 
 let count = signal(1);
-let double_count = computed(move || count.get() * 2);
+let double_count = computed(move |_| count.get() * 2);
 
 let _effect = effect(move || {
     println!("Count is: {}", count.get());

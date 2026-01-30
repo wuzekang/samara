@@ -86,8 +86,8 @@ impl super::ReactiveSystem {
                     let next_sub = self.links[subs].next_sub;
                     link = subs;
                     if let Some(next_sub_val) = next_sub {
-                        if let Some(next_val) = next {
-                            self.stack.push(next_val);
+                        if let Some(next) = next {
+                            self.stack.push(next);
                         }
                         next = Some(next_sub_val);
                     }
@@ -101,7 +101,7 @@ impl super::ReactiveSystem {
                 continue 'top;
             }
 
-            while let Some(l) = self.stack.pop() {
+            if let Some(l) = self.stack.pop() {
                 link = l;
                 next = self.links[link].next_sub;
                 continue 'top;

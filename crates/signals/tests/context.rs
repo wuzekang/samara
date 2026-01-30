@@ -97,7 +97,7 @@ fn test_integration_context_with_computed() {
         provide_context(Config(10));
         let multiplier = signal(2);
 
-        let doubled = computed(move || {
+        let doubled = computed(move |_| {
             let config = use_context::<Config>().unwrap();
             config.0 * multiplier.get()
         });

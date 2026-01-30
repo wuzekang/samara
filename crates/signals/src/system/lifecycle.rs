@@ -54,14 +54,13 @@ impl super::ReactiveSystem {
         n.flags = ReactiveFlags::MUTABLE | ReactiveFlags::RECURSED_CHECK;
 
         let dirty = if let NodeInner::Computed(inner) = &mut n.inner {
-            inner.update();
-            inner.dirty()
+            inner.update()
         } else {
             false
         };
 
         self.active_sub.set(prev_sub);
-        n.flags.remove(ReactiveFlags::RECURSED_CHECK);
+        self.nodes[node].flags.remove(ReactiveFlags::RECURSED_CHECK);
         self.purge_deps(node, false);
         dirty
     }

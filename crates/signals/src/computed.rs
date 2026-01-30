@@ -19,7 +19,7 @@ impl<T> Copy for Computed<T> {}
 impl<T: 'static> Computed<T> {
     pub fn new<F>(getter: F) -> Self
     where
-        F: Fn() -> T + 'static,
+        F: Fn(Option<T>) -> T + 'static,
     {
         let node = REACTIVE_SYSTEM.with(|ctx| unsafe {
             let ctx = &mut *ctx.get();
@@ -75,7 +75,7 @@ where
 pub fn computed<T, F>(getter: F) -> Computed<T>
 where
     T: 'static,
-    F: Fn() -> T + 'static,
+    F: Fn(Option<T>) -> T + 'static,
 {
     Computed::new(getter)
 }

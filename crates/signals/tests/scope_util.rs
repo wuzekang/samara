@@ -26,7 +26,7 @@ fn test_scoped_cleanup_works() {
 
     let scoped_fn = scoped(|_| {
         let _s = signal(1);
-        let _c = computed(move || 2);
+        let _c = computed(move |_| 2);
     });
     let (_, scope) = scoped_fn(());
 
@@ -98,7 +98,7 @@ fn test_scoped_with_effect() {
     let scoped_fn = scoped(|_| {
         let counter = signal(0);
         let _effect = effect(move || {
-            counter.set(counter.get() + 1);
+            counter.update(|value| *value += 1);
         });
     });
 

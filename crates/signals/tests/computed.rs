@@ -208,9 +208,9 @@ fn test_memo_diamond_effect() {
 #[test]
 fn test_computed_diamond_effect() {
     let src = signal(1i32);
-    let left = computed(move || src.get() + 1);
-    let right = computed(move || src.get() * 2);
-    let diamond = computed(move || left.get() + right.get());
+    let left = computed(move |_| src.get() + 1);
+    let right = computed(move |_| src.get() * 2);
+    let diamond = computed(move |_| left.get() + right.get());
 
     let c = Rc::new(RefCell::new(0));
     effect({

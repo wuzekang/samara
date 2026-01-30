@@ -67,7 +67,6 @@ impl super::ReactiveSystem {
     /// Get a signal value (with tracking)
     #[inline]
     pub fn signal_get<T: 'static + Clone>(&mut self, node: NodeKey) -> T {
-        self.signal_track(node);
         unsafe { &*(self.signal(node).value as *const dyn Any as *const T) }.clone()
     }
 
@@ -93,6 +92,12 @@ impl super::ReactiveSystem {
         unsafe { *(signal.value as *mut dyn Any as *mut T) = value };
         signal.release_write();
         self.signal_notify(node);
+    }
+
+    #[inline]
+    pub fn signal_with<T: 'static, O>(&mut self, node: NodeKey, f: impl FnOnce(&T) -> O) -> O {
+        let signal = self.signal(node);
+        f(unsafe { &*(signal.value as *const dyn Any as *const T) })
     }
 
     /// Update a signal value

@@ -20,6 +20,10 @@ pub async fn join() {
     EXECUTOR.with(|executor| executor.join()).await
 }
 
+pub async fn poll() {
+    EXECUTOR.with(|executor| executor.poll()).await
+}
+
 pub struct Resource<T> {
     pub value: Signal<Option<T>>,
     pub loading: Signal<bool>,

@@ -23,7 +23,7 @@ impl super::ReactiveSystem {
     /// Create a new computed node (without equality check)
     pub fn computed_new<F, T>(&mut self, getter: F) -> NodeKey
     where
-        F: Fn() -> T + 'static,
+        F: Fn(Option<T>) -> T + 'static,
         T: 'static,
     {
         let inner: Box<dyn ComputedOps> = Box::new(ComputedNodeInner::new(Box::new(getter)));
@@ -57,12 +57,12 @@ impl super::ReactiveSystem {
             self.cycle += 1;
             let prev_sub = self.set_active_sub(Some(node));
             let n = &mut self.nodes[node];
-            n.flags = ReactiveFlags::MUTABLE | ReactiveFlags::RECURSED_CHECK;
+            n.flags = ReactiveFlags::MUTABLE;
             if let NodeInner::Computed(inner) = &mut n.inner {
                 inner.update();
             }
             self.active_sub.set(prev_sub);
-            n.flags.remove(ReactiveFlags::RECURSED_CHECK);
+            // n.flags.remove(ReactiveFlags::RECURSED_CHECK);
             self.purge_deps(node, false);
         }
 

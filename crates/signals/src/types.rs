@@ -11,19 +11,18 @@ new_key_type! {
 
 /// Trait for type-erased derived node operations
 pub trait ComputedOps {
-    fn update(&mut self);
-    fn dirty(&self) -> bool;
+    fn update(&mut self) -> bool;
     fn as_any(&self) -> &dyn Any;
 }
 
 /// Computed node without equality check (always dirty after update)
 pub struct ComputedNodeInner<T> {
     value: Option<T>,
-    getter: Box<dyn Fn() -> T + 'static>,
+    getter: Box<dyn Fn(Option<T>) -> T + 'static>,
 }
 
 impl<T: 'static> ComputedNodeInner<T> {
-    pub fn new(getter: Box<dyn Fn() -> T + 'static>) -> Self {
+    pub fn new(getter: Box<dyn Fn(Option<T>) -> T + 'static>) -> Self {
         Self {
             value: None,
             getter,
@@ -33,14 +32,9 @@ impl<T: 'static> ComputedNodeInner<T> {
 
 impl<T: 'static> ComputedOps for ComputedNodeInner<T> {
     #[inline]
-    fn update(&mut self) {
-        self.value = Some((self.getter)());
-    }
-
-    #[inline]
-    fn dirty(&self) -> bool {
-        // Always dirty after first update
-        self.value.is_some()
+    fn update(&mut self) -> bool {
+        self.value = Some((self.getter)(self.value.take()));
+        true
     }
 
     #[inline]
@@ -72,7 +66,7 @@ impl<T: PartialEq + 'static> MemoNodeInner<T> {
 
 impl<T: PartialEq + 'static> ComputedOps for MemoNodeInner<T> {
     #[inline]
-    fn update(&mut self) {
+    fn update(&mut self) -> bool {
         let new_value = (self.getter)();
         match (&self.prev, &self.curr) {
             (None, None) | (None, Some(_)) => {
@@ -87,10 +81,6 @@ impl<T: PartialEq + 'static> ComputedOps for MemoNodeInner<T> {
                 self.curr = Some(new_value);
             }
         }
-    }
-
-    #[inline]
-    fn dirty(&self) -> bool {
         match (&self.prev, &self.curr) {
             (Some(prev_val), Some(curr_val)) => prev_val != curr_val,
             _ => false,

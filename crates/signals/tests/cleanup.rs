@@ -94,7 +94,7 @@ fn test_nested_effect_with_computed() {
     let s = signal(1);
 
     effect(move || {
-        let c = computed(move || s.get());
+        let c = computed(move |_| s.get());
         c.get();
 
         effect(move || {}).dispose();
@@ -111,7 +111,7 @@ fn test_signal_access_in_cleanup() {
     let cnt = signal(0);
     let scope = scope(move || {
         effect(move || {
-            let c = computed(move || s.get() * 2);
+            let c = computed(move |_| s.get() * 2);
             c.get();
 
             on_cleanup(move || {

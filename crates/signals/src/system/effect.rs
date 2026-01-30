@@ -59,7 +59,11 @@ impl super::ReactiveSystem {
         // Set as current scope
         let prev_scope = self.current_scope.get();
         self.current_scope.set(scope_node);
+        let prev_sub = self.set_active_sub(Some(scope_node));
+
         f();
+        
+        self.set_active_sub(prev_sub);
         self.current_scope.set(prev_scope);
 
         scope_node

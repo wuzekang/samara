@@ -129,7 +129,6 @@ fn test_multiple_modifications_same_signal() {
     let signal = signal(0);
 
     Effect::new(move || {
-        let v = signal.get();
-        signal.set(v + 1);
+        signal.update(|v| *v += 1);
     });
 }

@@ -443,7 +443,7 @@ fn test_effect_run_no_leak() {
     let s = signal(1);
 
     let _e0 = effect(move || {
-        let c = computed(move || {
+        let c = computed(move |_| {
             let _e1 = effect(move || {});
             s.get()
         });

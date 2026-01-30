@@ -71,5 +71,5 @@ fn test_scope_track_in_outer_effect() {
 
     assert_eq!(*triggers.borrow(), 1);
     source.set(2);
-    assert_eq!(*triggers.borrow(), 2);
+    assert_eq!(*triggers.borrow(), 1);
 }

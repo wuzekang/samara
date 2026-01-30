@@ -75,6 +75,7 @@ impl Future for ReactiveFuture {
 }
 
 pub struct JoinFuture {
+    pub stop: bool,
     pub rx: Rc<RefCell<mpsc::UnboundedReceiver<ReactiveFuture>>>,
     pub tasks: Rc<RefCell<FuturesUnordered<ReactiveFuture>>>,
 }
@@ -96,7 +97,7 @@ impl Future for JoinFuture {
                 dirty = true;
             }
         }
-        if tasks.is_empty() {
+        if tasks.is_empty() && self.stop {
             Poll::Ready(())
         } else {
             Poll::Pending
@@ -131,6 +132,15 @@ impl Executor {
     /// Flush pending tasks to the main task list
     pub fn join(&self) -> JoinFuture {
         JoinFuture {
+            stop: true,
+            rx: self.rx.clone(),
+            tasks: self.tasks.clone(),
+        }
+    }
+
+    pub fn poll(&self) -> JoinFuture {
+        JoinFuture {
+            stop: false,
             rx: self.rx.clone(),
             tasks: self.tasks.clone(),
         }
