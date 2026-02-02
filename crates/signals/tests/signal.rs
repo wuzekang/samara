@@ -79,7 +79,7 @@ fn test_signal_write() {
 
 #[test]
 fn test_signal_write_dirty() {
-    let v = Signal::new(vec![0]);
+    let v = signal(vec![0]);
     let c = Rc::new(RefCell::new(0));
     effect({
         let c = c.clone();
@@ -128,7 +128,7 @@ fn test_signal_does_not_notify_if_unchanged() {
 fn test_multiple_modifications_same_signal() {
     let signal = signal(0);
 
-    Effect::new(move || {
+    effect(move || {
         signal.update(|v| *v += 1);
     });
 }

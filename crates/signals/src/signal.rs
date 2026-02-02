@@ -54,10 +54,10 @@ impl<T: 'static + Clone> Signal<T> {
 }
 
 impl<T: 'static> Signal<T> {
-    pub fn new(initial: T) -> Self {
+    pub fn new(initial: T, caller: &'static std::panic::Location<'static>) -> Self {
         let node = REACTIVE_SYSTEM.with(move |ctx| unsafe {
             let ctx = &mut *ctx.get();
-            ctx.signal_new(initial)
+            ctx.signal_new(initial, caller)
         });
         Self {
             node,
@@ -228,6 +228,7 @@ impl<T> Deref for SignalReadGuard<'_, T> {
     }
 }
 
+#[track_caller]
 pub fn signal<T: 'static>(initial: T) -> Signal<T> {
-    Signal::new(initial)
+    Signal::new(initial, std::panic::Location::caller())
 }

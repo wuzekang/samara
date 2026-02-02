@@ -2,11 +2,15 @@ use crate::{
     flags::ReactiveFlags,
     types::{NodeInner, NodeKey, ReactiveNode, SignalNode},
 };
-use std::any::Any;
+use std::{any::Any, panic::Location};
 
 impl super::ReactiveSystem {
     /// Create a new signal node
-    pub fn signal_new<T: 'static>(&mut self, initial: T) -> NodeKey {
+    pub fn signal_new<T: 'static>(
+        &mut self,
+        initial: T,
+        caller: &'static Location<'static>,
+    ) -> NodeKey {
         use crate::types::BorrowState;
         use std::cell::Cell;
         let node = self.nodes.insert(ReactiveNode::new(
@@ -16,6 +20,7 @@ impl super::ReactiveSystem {
             }),
             ReactiveFlags::MUTABLE,
             Some(self.current_scope.get()),
+            caller,
         ));
         self.link_child(node);
         node

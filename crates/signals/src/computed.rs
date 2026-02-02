@@ -17,13 +17,13 @@ impl<T> Clone for Computed<T> {
 impl<T> Copy for Computed<T> {}
 
 impl<T: 'static> Computed<T> {
-    pub fn new<F>(getter: F) -> Self
+    pub fn new<F>(getter: F, caller: &'static std::panic::Location<'static>) -> Self
     where
         F: Fn(Option<T>) -> T + 'static,
     {
         let node = REACTIVE_SYSTEM.with(|ctx| unsafe {
             let ctx = &mut *ctx.get();
-            ctx.computed_new(getter)
+            ctx.computed_new(getter, caller)
         });
         Self {
             node,
@@ -49,13 +49,13 @@ impl<T: 'static + Clone> Computed<T> {
 }
 
 impl<T: PartialEq + 'static> Computed<T> {
-    pub fn memo<F>(getter: F) -> Self
+    pub fn memo<F>(getter: F, caller: &'static std::panic::Location<'static>) -> Self
     where
         F: Fn() -> T + 'static,
     {
         let node = REACTIVE_SYSTEM.with(move |ctx| unsafe {
             let ctx = &mut *ctx.get();
-            ctx.computed_memo(getter)
+            ctx.computed_memo(getter, caller)
         });
         Self {
             node,
@@ -64,18 +64,20 @@ impl<T: PartialEq + 'static> Computed<T> {
     }
 }
 
+#[track_caller]
 pub fn memo<T, F>(getter: F) -> Computed<T>
 where
     T: PartialEq + 'static,
     F: Fn() -> T + 'static,
 {
-    Computed::memo(getter)
+    Computed::memo(getter, std::panic::Location::caller())
 }
 
+#[track_caller]
 pub fn computed<T, F>(getter: F) -> Computed<T>
 where
     T: 'static,
     F: Fn(Option<T>) -> T + 'static,
 {
-    Computed::new(getter)
+    Computed::new(getter, std::panic::Location::caller())
 }

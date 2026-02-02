@@ -4,7 +4,11 @@ use crate::types::{
 
 impl super::ReactiveSystem {
     /// Create a new memo node (with equality check)
-    pub fn computed_memo<F, T>(&mut self, getter: F) -> NodeKey
+    pub fn computed_memo<F, T>(
+        &mut self,
+        getter: F,
+        caller: &'static std::panic::Location<'static>,
+    ) -> NodeKey
     where
         F: Fn() -> T + 'static,
         T: PartialEq + 'static,
@@ -15,13 +19,18 @@ impl super::ReactiveSystem {
             NodeInner::Computed(inner),
             ReactiveFlags::NONE,
             Some(self.current_scope.get()),
+            caller,
         ));
         self.link_child(node);
         node
     }
 
     /// Create a new computed node (without equality check)
-    pub fn computed_new<F, T>(&mut self, getter: F) -> NodeKey
+    pub fn computed_new<F, T>(
+        &mut self,
+        getter: F,
+        caller: &'static std::panic::Location<'static>,
+    ) -> NodeKey
     where
         F: Fn(Option<T>) -> T + 'static,
         T: 'static,
@@ -32,6 +41,7 @@ impl super::ReactiveSystem {
             NodeInner::Computed(inner),
             ReactiveFlags::NONE,
             Some(self.current_scope.get()),
+            caller,
         ));
         self.link_child(node);
         node
@@ -56,14 +66,13 @@ impl super::ReactiveSystem {
             // First access - compute initial value
             self.cycle += 1;
             let prev_sub = self.set_active_sub(Some(node));
-            let n = &mut self.nodes[node];
-            n.flags = ReactiveFlags::MUTABLE;
-            if let NodeInner::Computed(inner) = &mut n.inner {
+            self.nodes[node].flags = ReactiveFlags::MUTABLE | ReactiveFlags::RECURSED_CHECK;
+            if let NodeInner::Computed(inner) = &mut self.nodes[node].inner {
                 inner.update();
             }
             self.active_sub.set(prev_sub);
-            // n.flags.remove(ReactiveFlags::RECURSED_CHECK);
             self.purge_deps(node, false);
+            self.nodes[node].flags.remove(ReactiveFlags::RECURSED_CHECK);
         }
 
         // Link to active subscriber (after computing value)

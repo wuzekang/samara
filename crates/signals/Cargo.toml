@@ -10,7 +10,9 @@ keywords = ["signal", "alien", "event", "reactive", "observer"]
 categories = ["asynchronous", "concurrency", "data-structures", "rust-patterns"]
 
 [dependencies]
-slotmap = "1.1.1"
+slotmap = { version = "1.1.1", features = ["serde"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 futures-channel = "0.3"
 futures-core = "0.3"
 futures-util = "0.3"

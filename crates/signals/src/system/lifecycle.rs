@@ -46,22 +46,18 @@ impl super::ReactiveSystem {
 
     /// Update a computed node and return whether it changed
     pub fn update_computed(&mut self, node: NodeKey) -> bool {
-        self.cycle += 1;
         let prev_sub = self.set_active_sub(Some(node));
-
-        let n = &mut self.nodes[node];
-        n.deps_tail = None;
-        n.flags = ReactiveFlags::MUTABLE | ReactiveFlags::RECURSED_CHECK;
-
-        let dirty = if let NodeInner::Computed(inner) = &mut n.inner {
+        self.cycle += 1;
+        self.nodes[node].deps_tail = None;
+        self.nodes[node].flags = ReactiveFlags::MUTABLE | ReactiveFlags::RECURSED_CHECK;
+        let dirty = if let NodeInner::Computed(inner) = &mut self.nodes[node].inner {
             inner.update()
         } else {
             false
         };
-
         self.active_sub.set(prev_sub);
-        self.nodes[node].flags.remove(ReactiveFlags::RECURSED_CHECK);
         self.purge_deps(node, false);
+        self.nodes[node].flags.remove(ReactiveFlags::RECURSED_CHECK);
         dirty
     }
 

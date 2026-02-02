@@ -1,3 +1,5 @@
+use serde::{Serialize, Serializer, ser::SerializeStruct};
+use std::panic::Location;
 use std::{any::Any, cell::Cell, fmt::Debug};
 
 use ::slotmap::new_key_type;
@@ -184,6 +186,22 @@ pub enum NodeInner {
     None,
 }
 
+impl serde::Serialize for NodeInner {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        // Serialize only the variant name, not the contents
+        let variant_name = match self {
+            NodeInner::Effect(_) => "Effect",
+            NodeInner::Computed(_) => "Computed",
+            NodeInner::Signal(_) => "Signal",
+            NodeInner::None => "None",
+        };
+        serializer.serialize_str(variant_name)
+    }
+}
+
 impl Debug for NodeInner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -195,7 +213,22 @@ impl Debug for NodeInner {
     }
 }
 
-#[derive(Debug)]
+/// Custom serialization function for Location to capture call site information
+fn serialize_location<S>(
+    location: &&'static Location<'static>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    let mut state = serializer.serialize_struct("Location", 3)?;
+    state.serialize_field("file", location.file())?;
+    state.serialize_field("line", &location.line())?;
+    state.serialize_field("col", &location.column())?;
+    state.end()
+}
+
+#[derive(Debug, Serialize)]
 pub struct ReactiveNode {
     pub inner: NodeInner,
     pub deps: Option<LinkKey>,
@@ -207,11 +240,18 @@ pub struct ReactiveNode {
     pub next: Option<NodeKey>,
     pub prev: Option<NodeKey>,
     pub flags: ReactiveFlags,
+    #[serde(serialize_with = "serialize_location")]
+    pub caller: &'static Location<'static>,
 }
 
 impl ReactiveNode {
     /// Create a new reactive node with the given inner type, flags, and parent.
-    pub(crate) fn new(inner: NodeInner, flags: ReactiveFlags, parent: Option<NodeKey>) -> Self {
+    pub(crate) fn new(
+        inner: NodeInner,
+        flags: ReactiveFlags,
+        parent: Option<NodeKey>,
+        caller: &'static Location<'static>,
+    ) -> Self {
         Self {
             inner,
             deps: None,
@@ -223,11 +263,12 @@ impl ReactiveNode {
             child: None,
             next: None,
             prev: None,
+            caller,
         }
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Link {
     pub version: usize,
     pub dep: NodeKey,

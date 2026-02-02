@@ -11,11 +11,14 @@ impl Scope {
         Self { node }
     }
 
-    pub fn run<F: FnOnce() + 'static>(f: F) -> Self {
+    pub fn run<F: FnOnce() + 'static>(
+        f: F,
+        caller: &'static std::panic::Location<'static>,
+    ) -> Self {
         let scope = REACTIVE_SYSTEM.with(move |ctx| unsafe {
             let ctx = &mut *ctx.get();
 
-            ctx.new_scope(f)
+            ctx.new_scope(f, caller)
         });
         Self { node: scope }
     }
@@ -50,8 +53,9 @@ pub fn cleanup() {
 /// });
 /// scope.dispose();
 /// ```
+#[track_caller]
 pub fn scope<F: FnOnce() + 'static>(f: F) -> Scope {
-    Scope::run(f)
+    Scope::run(f, std::panic::Location::caller())
 }
 
 /// Creates a closure that executes a function within a new child scope.
@@ -75,10 +79,12 @@ pub fn scope<F: FnOnce() + 'static>(f: F) -> Scope {
 /// assert_eq!(result, 6);
 /// scope.dispose(); // Manually cleanup the child scope
 /// ```
+#[track_caller]
 pub fn scoped<T, U>(f: impl Fn(T) -> U + 'static) -> impl Fn(T) -> (U, Scope)
 where
     T: 'static,
 {
+    let caller = std::panic::Location::caller();
     // CAPTURE the current scope at closure creation time
     let parent_scope = REACTIVE_SYSTEM.with(|ctx| unsafe {
         let ctx = &*ctx.get();
@@ -90,7 +96,7 @@ where
             let ctx = &mut *ctx.get();
 
             // Create child scope node with the CAPTURED parent
-            let scope_node = ctx.new_child_scope(parent_scope);
+            let scope_node = ctx.new_child_scope(parent_scope, caller);
 
             // Set as current scope
             let prev_scope = ctx.current_scope.get();

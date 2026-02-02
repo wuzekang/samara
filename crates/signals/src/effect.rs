@@ -7,10 +7,13 @@ pub struct Effect {
 }
 
 impl Effect {
-    pub fn new<F: Fn() + 'static>(effect: F) -> Self {
+    pub fn new<F: Fn() + 'static>(
+        effect: F,
+        caller: &'static std::panic::Location<'static>,
+    ) -> Self {
         let node = REACTIVE_SYSTEM.with(move |ctx| unsafe {
             let ctx = &mut *ctx.get();
-            ctx.new_effect(effect)
+            ctx.new_effect(effect, caller)
         });
         Self { node }
     }
@@ -22,15 +25,17 @@ impl Effect {
     }
 }
 
+#[track_caller]
 pub fn effect<F: Fn() + 'static>(effect: F) -> Effect {
-    Effect::new(effect)
+    Effect::new(effect, std::panic::Location::caller())
 }
 
+#[track_caller]
 pub fn trigger<F: Fn() + 'static>(f: F) {
     REACTIVE_SYSTEM.with(move |ctx| unsafe {
         let ctx = &mut *ctx.get();
 
-        ctx.trigger(f);
+        ctx.trigger(f, std::panic::Location::caller());
     });
 }
 
@@ -87,5 +92,12 @@ pub fn count() -> (usize, usize) {
     REACTIVE_SYSTEM.with(|ctx| unsafe {
         let ctx = &mut *ctx.get();
         ctx.count()
+    })
+}
+
+pub fn serialize() -> String {
+    REACTIVE_SYSTEM.with(|ctx| unsafe {
+        let ctx = &mut *ctx.get();
+        serde_json::ser::to_string(ctx).unwrap()
     })
 }

@@ -2,7 +2,11 @@ use crate::types::{EffectNode, Link, NodeInner, NodeKey, ReactiveFlags, Reactive
 
 impl super::ReactiveSystem {
     /// Create a new effect node
-    pub fn new_effect<F: Fn() + 'static>(&mut self, effect: F) -> NodeKey {
+    pub fn new_effect<F: Fn() + 'static>(
+        &mut self,
+        effect: F,
+        caller: &'static std::panic::Location<'static>,
+    ) -> NodeKey {
         let parent_scope = self.current_scope.get();
 
         // Create ONE node that is both the effect AND its scope
@@ -10,8 +14,9 @@ impl super::ReactiveSystem {
             NodeInner::Effect(EffectNode {
                 effect: Box::new(effect),
             }),
-            crate::types::ReactiveFlags::WATCHING | crate::types::ReactiveFlags::RECURSED_CHECK,
+            ReactiveFlags::WATCHING | ReactiveFlags::RECURSED_CHECK,
             Some(parent_scope),
+            caller,
         ));
 
         // Link this effect/scope node to parent's children list
@@ -35,22 +40,23 @@ impl super::ReactiveSystem {
         // Restore parent scope
         self.current_scope.set(prev_scope);
         self.active_sub.set(prev_sub);
-
-        self.nodes[node]
-            .flags
-            .remove(crate::types::ReactiveFlags::RECURSED_CHECK);
-
+        self.nodes[node].flags.remove(ReactiveFlags::RECURSED_CHECK);
         node
     }
 
     /// Create a new scope node
-    pub fn new_scope<F: FnOnce() + 'static>(&mut self, f: F) -> NodeKey {
+    pub fn new_scope<F: FnOnce() + 'static>(
+        &mut self,
+        f: F,
+        caller: &'static std::panic::Location<'static>,
+    ) -> NodeKey {
         let parent = self.current_scope.get();
         // Create scope node (effect without execution)
         let scope_node = self.nodes.insert(ReactiveNode::new(
             NodeInner::None,
-            crate::types::ReactiveFlags::NONE,
+            ReactiveFlags::NONE,
             Some(parent),
+            caller,
         ));
 
         // Link to parent's children list
@@ -62,7 +68,7 @@ impl super::ReactiveSystem {
         let prev_sub = self.set_active_sub(Some(scope_node));
 
         f();
-        
+
         self.set_active_sub(prev_sub);
         self.current_scope.set(prev_scope);
 
@@ -70,12 +76,17 @@ impl super::ReactiveSystem {
     }
 
     /// Create a new child scope node with an explicit parent scope
-    pub fn new_child_scope(&mut self, parent: NodeKey) -> NodeKey {
+    pub fn new_child_scope(
+        &mut self,
+        parent: NodeKey,
+        caller: &'static std::panic::Location<'static>,
+    ) -> NodeKey {
         // Create scope node with explicit parent
         let scope_node = self.nodes.insert(ReactiveNode::new(
             NodeInner::None,
             ReactiveFlags::NONE,
             Some(parent),
+            caller,
         ));
 
         // Link to parent's children list
@@ -90,15 +101,13 @@ impl super::ReactiveSystem {
             return;
         };
         let flags = n.flags;
-        if flags.contains(crate::types::ReactiveFlags::DIRTY)
-            || (flags.contains(crate::types::ReactiveFlags::PENDING)
+        if flags.contains(ReactiveFlags::DIRTY)
+            || (flags.contains(ReactiveFlags::PENDING)
                 && self.check_dirty(self.nodes[node].deps.unwrap(), node))
         {
             self.cycle += 1;
             self.nodes[node].deps_tail = None;
-            self.nodes[node].flags =
-                crate::types::ReactiveFlags::WATCHING | crate::types::ReactiveFlags::RECURSED_CHECK;
-
+            self.nodes[node].flags = ReactiveFlags::WATCHING | ReactiveFlags::RECURSED_CHECK;
             self.cleanup_scope(node);
 
             // Clean up children from previous execution
@@ -120,23 +129,26 @@ impl super::ReactiveSystem {
             self.current_scope.set(prev_scope);
             self.active_sub.set(prev_sub);
 
-            self.nodes[node]
-                .flags
-                .remove(crate::types::ReactiveFlags::RECURSED_CHECK);
             self.purge_deps(node, false);
+            self.nodes[node].flags.remove(ReactiveFlags::RECURSED_CHECK);
         } else {
-            self.nodes[node].flags = crate::types::ReactiveFlags::WATCHING;
+            self.nodes[node].flags = ReactiveFlags::WATCHING;
         }
     }
 
     /// Trigger a reactive function
-    pub fn trigger<F: Fn() + 'static>(&mut self, f: F) {
+    pub fn trigger<F: Fn() + 'static>(
+        &mut self,
+        f: F,
+        caller: &'static std::panic::Location<'static>,
+    ) {
         // Create a temporary subscriber node
         let parent = self.current_scope.get();
         let sub = self.nodes.insert(ReactiveNode::new(
             NodeInner::None,
-            crate::types::ReactiveFlags::WATCHING,
+            ReactiveFlags::WATCHING,
             Some(parent),
+            caller,
         ));
 
         let prev_sub = self.set_active_sub(Some(sub));
@@ -152,7 +164,7 @@ impl super::ReactiveSystem {
 
             let subs = self.nodes[dep].subs;
             if let Some(subs) = subs {
-                self.nodes[sub].flags = crate::types::ReactiveFlags::NONE;
+                self.nodes[sub].flags = ReactiveFlags::NONE;
                 self.propagate(subs);
                 self.shallow_propagate(subs);
             }

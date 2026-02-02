@@ -1,4 +1,5 @@
 use std::ops::{BitAnd, BitAndAssign, BitOr, Not};
+use serde::Serialize;
 
 /// Reactive node flags stored as a bitset for efficient operations.
 ///
@@ -10,7 +11,7 @@ use std::ops::{BitAnd, BitAndAssign, BitOr, Not};
 /// - Bit 4: DIRTY - Node needs recomputation
 /// - Bit 5: PENDING - Node is queued for update
 /// - Bits 6-7: Reserved for future use
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
 pub struct ReactiveFlags(pub u8);
 
 impl ReactiveFlags {
@@ -74,12 +75,5 @@ impl Not for ReactiveFlags {
     #[inline]
     fn not(self) -> Self::Output {
         Self(!self.0)
-    }
-}
-
-impl PartialEq for ReactiveFlags {
-    #[inline]
-    fn eq(&self, other: &Self) -> bool {
-        self.0 == other.0
     }
 }
