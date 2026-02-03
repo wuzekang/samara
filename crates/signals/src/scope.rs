@@ -1,5 +1,5 @@
 use crate::runtime::REACTIVE_SYSTEM;
-use crate::types::NodeKey;
+use crate::types::{Location, NodeKey, caller};
 
 #[derive(Clone, Copy)]
 pub struct Scope {
@@ -11,29 +11,20 @@ impl Scope {
         Self { node }
     }
 
-    pub fn run<F: FnOnce() + 'static>(
-        f: F,
-        caller: &'static std::panic::Location<'static>,
-    ) -> Self {
-        let scope = REACTIVE_SYSTEM.with(move |ctx| unsafe {
-            let ctx = &mut *ctx.get();
-
-            ctx.new_scope(f, caller)
-        });
+    pub fn run<F: FnOnce() + 'static>(f: F, caller: Location) -> Self {
+        let scope = REACTIVE_SYSTEM.with(move |ctx| ctx.new_scope(f, caller));
         Self { node: scope }
     }
 
     pub fn dispose(&self) {
-        REACTIVE_SYSTEM.with(|ctx| unsafe {
-            let ctx = &mut *ctx.get();
+        REACTIVE_SYSTEM.with(|ctx| {
             ctx.dispose_scope(self.node);
         });
     }
 }
 
 pub fn cleanup() {
-    REACTIVE_SYSTEM.with(|ctx| unsafe {
-        let ctx = &mut *ctx.get();
+    REACTIVE_SYSTEM.with(|ctx| {
         ctx.cleanup();
     })
 }
@@ -55,7 +46,7 @@ pub fn cleanup() {
 /// ```
 #[track_caller]
 pub fn scope<F: FnOnce() + 'static>(f: F) -> Scope {
-    Scope::run(f, std::panic::Location::caller())
+    Scope::run(f, caller())
 }
 
 /// Creates a closure that executes a function within a new child scope.
@@ -84,29 +75,24 @@ pub fn scoped<T, U>(f: impl Fn(T) -> U + 'static) -> impl Fn(T) -> (U, Scope)
 where
     T: 'static,
 {
-    let caller = std::panic::Location::caller();
+    let caller = caller();
     // CAPTURE the current scope at closure creation time
-    let parent_scope = REACTIVE_SYSTEM.with(|ctx| unsafe {
-        let ctx = &*ctx.get();
-        ctx.current_scope.get()
-    });
+    let parent_scope = REACTIVE_SYSTEM.with(|ctx| ctx.current_scope());
 
     move |t| {
-        REACTIVE_SYSTEM.with(|ctx| unsafe {
-            let ctx = &mut *ctx.get();
-
+        REACTIVE_SYSTEM.with(|ctx| {
             // Create child scope node with the CAPTURED parent
             let scope_node = ctx.new_child_scope(parent_scope, caller);
 
             // Set as current scope
-            let prev_scope = ctx.current_scope.get();
-            ctx.current_scope.set(scope_node);
+            let prev_scope = ctx.current_scope();
+            ctx.set_current_scope(scope_node);
 
             // Execute function
             let result = f(t);
 
             // Restore previous scope
-            ctx.current_scope.set(prev_scope);
+            ctx.set_current_scope(prev_scope);
 
             (result, Scope::new(scope_node))
         })

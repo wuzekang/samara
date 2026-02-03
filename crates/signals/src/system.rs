@@ -1,9 +1,10 @@
+use crate::types::{
+    Link, LinkKey, NodeInner, NodeKey, ReactiveFlags, ReactiveNode, UnsafeBox, UnsafeSlotMap,
+    caller,
+};
 use serde::Serialize;
-use std::{cell::Cell, collections::HashMap, panic::Location, rc::Rc};
-
 use slotmap::SparseSecondaryMap;
-
-use crate::types::{Link, LinkKey, NodeInner, NodeKey, ReactiveFlags, ReactiveNode, UnsafeSlotMap};
+use std::{cell::Cell, collections::HashMap, rc::Rc};
 
 mod batching;
 mod computed;
@@ -27,9 +28,9 @@ pub struct ReactiveSystem {
     pub queued: Vec<NodeKey>,
     #[serde(skip)]
     pub stack: Vec<LinkKey>,
+    pub root: NodeKey,
     #[serde(skip)]
     pub active_sub: Cell<Option<NodeKey>>,
-    pub root: NodeKey,
     #[serde(skip)]
     pub current_scope: Cell<NodeKey>,
     pub nodes: NodeMap,
@@ -52,7 +53,7 @@ impl ReactiveSystem {
             NodeInner::None,
             ReactiveFlags::NONE,
             None,
-            Location::caller(),
+            caller(),
         ));
 
         Self {
@@ -66,3 +67,9 @@ impl ReactiveSystem {
         }
     }
 }
+
+// #[cfg(debug_assertions)]
+// pub type ReactiveSystemRef<T> = Rc<RefCell<T>>;
+
+// #[cfg(not(debug_assertions))]
+pub type ReactiveSystemRef<T> = UnsafeBox<T>;

@@ -22,10 +22,8 @@ impl ReactiveFuture {
     where
         F: Future<Output = ()> + 'static,
     {
-        let (scope, active_sub) = REACTIVE_SYSTEM.with(|ctx| unsafe {
-            let ctx = &mut *ctx.get();
-            (ctx.current_scope.get(), ctx.active_sub.get())
-        });
+        let (scope, active_sub) =
+            REACTIVE_SYSTEM.with(|ctx| (ctx.current_scope(), ctx.active_sub()));
 
         let (abort_handle, abort_registration) = AbortHandle::new_pair();
 
@@ -52,22 +50,20 @@ impl Future for ReactiveFuture {
         let active_sub = self.active_sub;
 
         // Set captured context
-        let (prev_scope, prev_sub) = REACTIVE_SYSTEM.with(|ctx| unsafe {
-            let ctx = &mut *ctx.get();
-            let prev_scope = ctx.current_scope.get();
-            let prev_sub = ctx.active_sub.get();
-            ctx.current_scope.set(scope);
-            ctx.active_sub.set(active_sub);
+        let (prev_scope, prev_sub) = REACTIVE_SYSTEM.with(|ctx| {
+            let prev_scope = ctx.current_scope();
+            let prev_sub = ctx.active_sub();
+            ctx.set_current_scope(scope);
+            ctx.set_active_sub(active_sub);
             (prev_scope, prev_sub)
         });
 
         let output = self.future.as_mut().poll(cx);
 
         // Restore previous context
-        REACTIVE_SYSTEM.with(|ctx| unsafe {
-            let ctx = &mut *ctx.get();
-            ctx.current_scope.set(prev_scope);
-            ctx.active_sub.set(prev_sub);
+        REACTIVE_SYSTEM.with(|ctx| {
+            ctx.set_current_scope(prev_scope);
+            ctx.restore_acative_sub(prev_sub);
         });
 
         output

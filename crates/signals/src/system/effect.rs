@@ -1,86 +1,97 @@
+use crate::system::ReactiveSystemRef;
 use crate::types::{EffectNode, Link, NodeInner, NodeKey, ReactiveFlags, ReactiveNode};
+use crate::types::{Location, RefCell};
+use std::rc::Rc;
 
 impl super::ReactiveSystem {
     /// Create a new effect node
-    pub fn new_effect<F: Fn() + 'static>(
-        &mut self,
+    pub fn new_effect<F: FnMut() + 'static>(
+        this: ReactiveSystemRef<Self>,
         effect: F,
-        caller: &'static std::panic::Location<'static>,
+        caller: Location,
     ) -> NodeKey {
-        let parent_scope = self.current_scope.get();
+        let effect = Rc::new(RefCell::new(effect));
 
-        // Create ONE node that is both the effect AND its scope
-        let node = self.nodes.insert(ReactiveNode::new(
-            NodeInner::Effect(EffectNode {
-                effect: Box::new(effect),
-            }),
-            ReactiveFlags::WATCHING | ReactiveFlags::RECURSED_CHECK,
-            Some(parent_scope),
-            caller,
-        ));
+        let (prev_scope, prev_sub, node) = {
+            let this = this.borrow_mut();
+            let parent_scope = this.current_scope.get();
 
-        // Link this effect/scope node to parent's children list
-        self.link_child(node);
+            // Create ONE node that is both the effect AND its scope
+            let node = this.nodes.insert(ReactiveNode::new(
+                NodeInner::Effect(EffectNode {
+                    effect: effect.clone(),
+                }),
+                ReactiveFlags::WATCHING | ReactiveFlags::RECURSED_CHECK,
+                Some(parent_scope),
+                caller,
+            ));
 
-        let prev_sub = self.set_active_sub(Some(node));
-        if let Some(prev_sub) = prev_sub {
-            self.link(node, prev_sub, 0);
-        }
+            // Link this effect/scope node to parent's children list
+            this.link_child(node);
 
-        // Set this node as current scope during effect execution
-        let prev_scope = self.current_scope.get();
-        self.current_scope.set(node);
+            let prev_sub = this.set_active_sub(Some(node));
+            if let Some(prev_sub) = prev_sub {
+                this.link(node, prev_sub, 0);
+            }
 
-        let NodeInner::Effect(effect) = &self.nodes[node].inner else {
-            panic!("Node is not an Effect");
+            // Set this node as current scope during effect execution
+            let prev_scope = this.current_scope.get();
+            this.current_scope.set(node);
+
+            (prev_scope, prev_sub, node)
         };
 
-        (effect.effect)();
+        (effect.borrow_mut())();
+
+        let this = this.borrow_mut();
 
         // Restore parent scope
-        self.current_scope.set(prev_scope);
-        self.active_sub.set(prev_sub);
-        self.nodes[node].flags.remove(ReactiveFlags::RECURSED_CHECK);
+        this.current_scope.set(prev_scope);
+        this.active_sub.set(prev_sub);
+        this.nodes[node].flags.remove(ReactiveFlags::RECURSED_CHECK);
         node
     }
 
     /// Create a new scope node
     pub fn new_scope<F: FnOnce() + 'static>(
-        &mut self,
+        this: ReactiveSystemRef<Self>,
         f: F,
-        caller: &'static std::panic::Location<'static>,
+        caller: Location,
     ) -> NodeKey {
-        let parent = self.current_scope.get();
-        // Create scope node (effect without execution)
-        let scope_node = self.nodes.insert(ReactiveNode::new(
-            NodeInner::None,
-            ReactiveFlags::NONE,
-            Some(parent),
-            caller,
-        ));
+        let (prev_sub, prev_scope, scope_node) = {
+            let mut this = this.borrow_mut();
+            let parent = this.current_scope.get();
+            // Create scope node (effect without execution)
+            let scope_node = this.nodes.insert(ReactiveNode::new(
+                NodeInner::None,
+                ReactiveFlags::NONE,
+                Some(parent),
+                caller,
+            ));
 
-        // Link to parent's children list
-        self.link_child(scope_node);
+            // Link to parent's children list
+            this.link_child(scope_node);
 
-        // Set as current scope
-        let prev_scope = self.current_scope.get();
-        self.current_scope.set(scope_node);
-        let prev_sub = self.set_active_sub(Some(scope_node));
+            // Set as current scope
+            let prev_scope = this.current_scope.get();
+            this.current_scope.set(scope_node);
+            let prev_sub = this.set_active_sub(Some(scope_node));
+
+            (prev_sub, prev_scope, scope_node)
+        };
 
         f();
 
-        self.set_active_sub(prev_sub);
-        self.current_scope.set(prev_scope);
+        let this = this.borrow();
+
+        this.set_active_sub(prev_sub);
+        this.current_scope.set(prev_scope);
 
         scope_node
     }
 
     /// Create a new child scope node with an explicit parent scope
-    pub fn new_child_scope(
-        &mut self,
-        parent: NodeKey,
-        caller: &'static std::panic::Location<'static>,
-    ) -> NodeKey {
+    pub fn new_child_scope(&mut self, parent: NodeKey, caller: Location) -> NodeKey {
         // Create scope node with explicit parent
         let scope_node = self.nodes.insert(ReactiveNode::new(
             NodeInner::None,
@@ -96,86 +107,95 @@ impl super::ReactiveSystem {
     }
 
     /// Run an effect
-    pub fn run(&mut self, node: NodeKey) {
-        let Some(n) = self.nodes.get(node) else {
+    pub fn run(this: ReactiveSystemRef<Self>, node: NodeKey) {
+        let Some((flags, deps)) = this
+            .borrow()
+            .nodes
+            .get(node)
+            .map(|item| (item.flags, item.deps))
+        else {
             return;
         };
-        let flags = n.flags;
         if flags.contains(ReactiveFlags::DIRTY)
             || (flags.contains(ReactiveFlags::PENDING)
-                && self.check_dirty(self.nodes[node].deps.unwrap(), node))
+                && Self::check_dirty(this.clone(), deps.unwrap(), node))
         {
-            self.cycle += 1;
-            self.nodes[node].deps_tail = None;
-            self.nodes[node].flags = ReactiveFlags::WATCHING | ReactiveFlags::RECURSED_CHECK;
-            self.cleanup_scope(node);
+            this.borrow_mut().cycle += 1;
+            this.borrow_mut().nodes[node].deps_tail = None;
+            this.borrow_mut().nodes[node].flags =
+                ReactiveFlags::WATCHING | ReactiveFlags::RECURSED_CHECK;
+            Self::cleanup_scope(this.clone(), node);
 
             // Clean up children from previous execution
             // This prevents memory leaks when effects run multiple times
-            self.purge_child(node);
+            this.borrow_mut().purge_child(node);
 
-            let NodeInner::Effect(EffectNode { effect }) = &self.nodes[node].inner else {
-                panic!("Node is not an Effect");
+            let effect = if let NodeInner::Effect(EffectNode { effect }) =
+                &this.borrow_mut().nodes[node].inner
+            {
+                Some(effect.clone())
+            } else {
+                None
             };
 
-            let prev_sub = self.set_active_sub(Some(node));
+            let prev_sub = this.borrow_mut().set_active_sub(Some(node));
             // Set this node as current scope during effect execution
-            let prev_scope = self.current_scope.get();
-            self.current_scope.set(node);
+            let prev_scope = this.borrow_mut().current_scope.get();
+            this.borrow_mut().current_scope.set(node);
 
-            (effect)();
+            if let Some(effect) = effect {
+                (effect.borrow_mut())();
+            }
 
             // Restore previous scope
-            self.current_scope.set(prev_scope);
-            self.active_sub.set(prev_sub);
+            this.borrow_mut().current_scope.set(prev_scope);
+            this.borrow_mut().active_sub.set(prev_sub);
 
-            self.purge_deps(node, false);
-            self.nodes[node].flags.remove(ReactiveFlags::RECURSED_CHECK);
+            this.borrow_mut().nodes[node]
+                .flags
+                .remove(ReactiveFlags::RECURSED_CHECK);
+            this.borrow_mut().purge_deps(node, false);
         } else {
-            self.nodes[node].flags = ReactiveFlags::WATCHING;
+            this.borrow_mut().nodes[node].flags = ReactiveFlags::WATCHING;
         }
     }
 
     /// Trigger a reactive function
-    pub fn trigger<F: Fn() + 'static>(
-        &mut self,
-        f: F,
-        caller: &'static std::panic::Location<'static>,
-    ) {
+    pub fn trigger<F: Fn() + 'static>(this: ReactiveSystemRef<Self>, f: F, caller: Location) {
         // Create a temporary subscriber node
-        let parent = self.current_scope.get();
-        let sub = self.nodes.insert(ReactiveNode::new(
+        let parent = this.borrow().current_scope.get();
+        let sub = this.borrow_mut().nodes.insert(ReactiveNode::new(
             NodeInner::None,
             ReactiveFlags::WATCHING,
             Some(parent),
             caller,
         ));
 
-        let prev_sub = self.set_active_sub(Some(sub));
+        let prev_sub = this.borrow_mut().set_active_sub(Some(sub));
         f();
-        self.active_sub.set(prev_sub);
+        this.borrow_mut().active_sub.set(prev_sub);
 
         // Unlink all dependencies
-        let mut current = self.nodes[sub].deps;
+        let mut current = this.borrow().nodes[sub].deps;
         while let Some(link_key) = current {
-            let Link { dep, next_sub, .. } = self.links[link_key];
+            let Link { dep, next_sub, .. } = this.borrow().links[link_key];
             current = next_sub;
-            self.unlink(link_key);
+            this.borrow_mut().unlink(link_key);
 
-            let subs = self.nodes[dep].subs;
+            let subs = this.borrow().nodes[dep].subs;
             if let Some(subs) = subs {
-                self.nodes[sub].flags = ReactiveFlags::NONE;
-                self.propagate(subs);
-                self.shallow_propagate(subs);
+                this.borrow_mut().nodes[sub].flags = ReactiveFlags::NONE;
+                this.borrow_mut().propagate(subs);
+                this.borrow_mut().shallow_propagate(subs);
             }
         }
 
-        if self.batch_depth == 0 {
-            self.flush();
+        if this.borrow().batch_depth == 0 {
+            Self::flush(this.clone());
         }
 
         // Remove the temporary node
-        self.nodes.remove(sub);
+        this.borrow_mut().nodes.remove(sub);
     }
 
     /// Set the active subscriber

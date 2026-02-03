@@ -1,9 +1,8 @@
+use crate::runtime::REACTIVE_SYSTEM;
+use crate::types::{Location, NodeKey, caller};
 use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::ops::{AddAssign, Deref, DerefMut};
-
-use crate::runtime::REACTIVE_SYSTEM;
-use crate::types::NodeKey;
 
 pub struct Signal<T> {
     node: NodeKey,
@@ -38,27 +37,20 @@ impl AddAssign<i32> for Signal<i32> {
 
 impl<T: 'static + Clone> Signal<T> {
     pub fn get(&self) -> T {
-        REACTIVE_SYSTEM.with(|ctx| unsafe {
-            let ctx = &mut *ctx.get();
+        REACTIVE_SYSTEM.with(|ctx| {
             ctx.signal_track(self.node);
             ctx.signal_get::<T>(self.node)
         })
     }
 
     pub fn get_untracked(&self) -> T {
-        REACTIVE_SYSTEM.with(|ctx| unsafe {
-            let ctx = &mut *ctx.get();
-            ctx.signal_get::<T>(self.node)
-        })
+        REACTIVE_SYSTEM.with(|ctx| ctx.signal_get::<T>(self.node))
     }
 }
 
 impl<T: 'static> Signal<T> {
-    pub fn new(initial: T, caller: &'static std::panic::Location<'static>) -> Self {
-        let node = REACTIVE_SYSTEM.with(move |ctx| unsafe {
-            let ctx = &mut *ctx.get();
-            ctx.signal_new(initial, caller)
-        });
+    pub fn new(initial: T, caller: Location) -> Self {
+        let node = REACTIVE_SYSTEM.with(move |ctx| ctx.signal_new(initial, caller));
         Self {
             node,
             _marker: PhantomData,
@@ -66,16 +58,11 @@ impl<T: 'static> Signal<T> {
     }
 
     pub fn set(&self, value: T) {
-        REACTIVE_SYSTEM.with(move |ctx| unsafe {
-            let ctx = &mut *ctx.get();
-            ctx.signal_set::<T>(self.node, value)
-        });
+        REACTIVE_SYSTEM.with(move |ctx| ctx.signal_set::<T>(self.node, value));
     }
 
     pub fn track(&self) {
-        REACTIVE_SYSTEM.with(|ctx| unsafe {
-            let ctx = &mut *ctx.get();
-
+        REACTIVE_SYSTEM.with(|ctx| {
             // Track dependencies
             ctx.signal_track(self.node);
         });
@@ -83,8 +70,7 @@ impl<T: 'static> Signal<T> {
 
     pub fn peek(&self) -> SignalReadGuard<'_, T> {
         let node = self.node;
-        REACTIVE_SYSTEM.with(|ctx| unsafe {
-            let ctx = &mut *ctx.get();
+        REACTIVE_SYSTEM.with(|ctx| {
             // Check borrow but don't track dependencies
             ctx.signal_borrow_read_check(node);
         });
@@ -103,15 +89,11 @@ impl<T: 'static> Signal<T> {
     }
 
     pub fn with<O>(&self, f: impl FnOnce(&T) -> O) -> O {
-        REACTIVE_SYSTEM.with(|ctx| unsafe {
-            let ctx = &mut *ctx.get();
-            ctx.signal_with(self.node, f)
-        })
+        REACTIVE_SYSTEM.with(|ctx| ctx.signal_with(self.node, f))
     }
 
     pub fn update(&self, f: impl FnOnce(&mut T)) {
-        REACTIVE_SYSTEM.with(|ctx| unsafe {
-            let ctx = &mut *ctx.get();
+        REACTIVE_SYSTEM.with(|ctx| {
             ctx.signal_update(self.node, f);
         });
     }
@@ -130,8 +112,7 @@ pub struct SignalWriteGuard<'a, T> {
 
 impl<T> SignalWriteGuard<'_, T> {
     pub fn new(node: NodeKey) -> Self {
-        REACTIVE_SYSTEM.with(|ctx| unsafe {
-            let ctx = &mut *ctx.get();
+        REACTIVE_SYSTEM.with(|ctx| {
             ctx.signal_borrow_write_check(node);
         });
         Self {
@@ -143,12 +124,11 @@ impl<T> SignalWriteGuard<'_, T> {
 
 impl<T> Drop for SignalWriteGuard<'_, T> {
     fn drop(&mut self) {
-        REACTIVE_SYSTEM.with(move |ctx| unsafe {
-            let ctx = &mut *ctx.get();
+        REACTIVE_SYSTEM.with(move |ctx| {
             // Only release if node still exists
-            if !ctx.nodes.contains_key(self.node) {
-                return;
-            }
+            // if !ctx.nodes.contains_key(self.node) {
+            //     return;
+            // }
             // Release borrow first
             ctx.signal_release_write(self.node);
             // Then notify subscribers
@@ -162,10 +142,7 @@ impl<T> Deref for SignalWriteGuard<'_, T> {
 
     fn deref(&self) -> &Self::Target {
         // Check validity on every deref
-        let value = REACTIVE_SYSTEM.with(|ctx| unsafe {
-            let ctx = &mut *ctx.get();
-            ctx.signal(self.node).value
-        });
+        let value = REACTIVE_SYSTEM.with(|ctx| ctx.signal_value(self.node));
         unsafe { &*(value as *const T) }
     }
 }
@@ -173,10 +150,7 @@ impl<T> Deref for SignalWriteGuard<'_, T> {
 impl<T> DerefMut for SignalWriteGuard<'_, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         // Check validity on every deref
-        let value = REACTIVE_SYSTEM.with(|ctx| unsafe {
-            let ctx = &mut *ctx.get();
-            ctx.signal(self.node).value
-        });
+        let value = REACTIVE_SYSTEM.with(|ctx| ctx.signal_value(self.node));
         unsafe { &mut *(value as *mut T) }
     }
 }
@@ -188,9 +162,7 @@ pub struct SignalReadGuard<'a, T> {
 
 impl<T> SignalReadGuard<'_, T> {
     pub fn new(node: NodeKey) -> Self {
-        REACTIVE_SYSTEM.with(|ctx| unsafe {
-            let ctx = &mut *ctx.get();
-
+        REACTIVE_SYSTEM.with(|ctx| {
             // Check borrow state
             ctx.signal_borrow_read_check(node);
 
@@ -206,12 +178,8 @@ impl<T> SignalReadGuard<'_, T> {
 
 impl<T> Drop for SignalReadGuard<'_, T> {
     fn drop(&mut self) {
-        REACTIVE_SYSTEM.with(move |ctx| unsafe {
-            let ctx = &mut *ctx.get();
-            // Only release if node still exists
-            if ctx.nodes.contains_key(self.node) {
-                ctx.signal_release_read(self.node);
-            }
+        REACTIVE_SYSTEM.with(move |ctx| {
+            ctx.signal_release_read(self.node);
         });
     }
 }
@@ -220,15 +188,12 @@ impl<T> Deref for SignalReadGuard<'_, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        let value = REACTIVE_SYSTEM.with(|ctx| unsafe {
-            let ctx = &mut *ctx.get();
-            ctx.signal(self.node).value
-        });
+        let value = REACTIVE_SYSTEM.with(|ctx| ctx.signal_value(self.node));
         unsafe { &*(value as *const T) }
     }
 }
 
 #[track_caller]
 pub fn signal<T: 'static>(initial: T) -> Signal<T> {
-    Signal::new(initial, std::panic::Location::caller())
+    Signal::new(initial, caller())
 }

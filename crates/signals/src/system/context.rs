@@ -55,7 +55,7 @@ impl ReactiveSystem {
     ///     });
     /// });
     /// ```
-    pub fn use_context<T: 'static + Clone>(&mut self) -> Option<T> {
+    pub fn use_context<T: 'static + Clone>(&self) -> Option<T> {
         let type_id = TypeId::of::<T>();
 
         // Walk parent chain to find the context

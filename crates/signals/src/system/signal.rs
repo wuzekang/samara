@@ -1,16 +1,14 @@
+use crate::system::ReactiveSystemRef;
+use crate::types::Location;
 use crate::{
     flags::ReactiveFlags,
     types::{NodeInner, NodeKey, ReactiveNode, SignalNode},
 };
-use std::{any::Any, panic::Location};
+use std::any::Any;
 
 impl super::ReactiveSystem {
     /// Create a new signal node
-    pub fn signal_new<T: 'static>(
-        &mut self,
-        initial: T,
-        caller: &'static Location<'static>,
-    ) -> NodeKey {
+    pub fn signal_new<T: 'static>(&mut self, initial: T, caller: Location) -> NodeKey {
         use crate::types::BorrowState;
         use std::cell::Cell;
         let node = self.nodes.insert(ReactiveNode::new(
@@ -77,40 +75,48 @@ impl super::ReactiveSystem {
 
     /// Notify subscribers of a signal change
     #[inline]
-    pub fn signal_notify(&mut self, node: NodeKey) {
-        let node = &mut self.nodes[node];
-        node.flags = ReactiveFlags::MUTABLE | ReactiveFlags::DIRTY;
-        let subs = node.subs;
+    pub fn signal_notify(this: ReactiveSystemRef<Self>, node: NodeKey) {
+        let subs = {
+            let node = &mut this.borrow_mut().nodes[node];
+            node.flags = ReactiveFlags::MUTABLE | ReactiveFlags::DIRTY;
+            let subs = node.subs;
+            subs
+        };
+
         if let Some(subs) = subs {
-            self.propagate(subs);
-            if self.batch_depth == 0 {
-                self.flush();
+            this.borrow_mut().propagate(subs);
+            if this.borrow_mut().batch_depth == 0 {
+                Self::flush(this.clone());
             }
         }
     }
 
     /// Set a signal value
     #[inline]
-    pub fn signal_set<T: 'static>(&mut self, node: NodeKey, value: T) {
-        let signal = self.signal(node);
-        signal.borrow_write_check();
-        unsafe { *(signal.value as *mut dyn Any as *mut T) = value };
-        signal.release_write();
-        self.signal_notify(node);
-    }
-
-    #[inline]
-    pub fn signal_with<T: 'static, O>(&mut self, node: NodeKey, f: impl FnOnce(&T) -> O) -> O {
-        let signal = self.signal(node);
-        f(unsafe { &*(signal.value as *const dyn Any as *const T) })
+    pub fn signal_set<T: 'static>(this: ReactiveSystemRef<Self>, node: NodeKey, value: T) {
+        {
+            let mut binding = this.borrow_mut();
+            let signal = binding.signal(node);
+            signal.borrow_write_check();
+            unsafe { *(signal.value as *mut dyn Any as *mut T) = value };
+            signal.release_write();
+        }
+        Self::signal_notify(this, node);
     }
 
     /// Update a signal value
     #[inline]
-    pub fn signal_update<T: 'static>(&mut self, node: NodeKey, f: impl FnOnce(&mut T) -> ()) {
-        let signal = self.signal(node);
-        f(unsafe { &mut *(signal.value as *mut dyn Any as *mut T) });
-        self.signal_notify(node);
+    pub fn signal_update<T: 'static>(
+        this: ReactiveSystemRef<Self>,
+        node: NodeKey,
+        f: impl FnOnce(&mut T) -> (),
+    ) {
+        {
+            let mut binding = this.borrow_mut();
+            let signal = binding.signal(node);
+            f(unsafe { &mut *(signal.value as *mut dyn Any as *mut T) });
+        }
+        Self::signal_notify(this, node);
     }
 
     /// Check if a read borrow is allowed, panic if not

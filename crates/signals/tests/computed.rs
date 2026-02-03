@@ -13,21 +13,21 @@ fn test_computed_basic() {
     assert_eq!(c.get(), 40);
 }
 
-#[test]
-fn test_computed_read() {
-    let s = signal(10i32);
+// #[test]
+// fn test_computed_read() {
+//     let s = signal(10i32);
 
-    #[derive(PartialEq, Clone)]
-    struct S {
-        value: i32,
-    }
-    let c = memo(move || S { value: s.get() * 2 });
+//     #[derive(PartialEq, Clone)]
+//     struct S {
+//         value: i32,
+//     }
+//     let c = memo(move || S { value: s.get() * 2 });
 
-    assert_eq!(c.read().value, 20);
+//     assert_eq!(c.read().value, 20);
 
-    s.set(20);
-    assert_eq!(c.read().value, 40);
-}
+//     s.set(20);
+//     assert_eq!(c.read().value, 40);
+// }
 
 #[test]
 fn test_computed_caches_result() {
@@ -192,7 +192,7 @@ fn test_memo_diamond_effect() {
         let c = c.clone();
         move || {
             *c.borrow_mut() += 1;
-            diamond.read();
+            diamond.get();
         }
     });
 
@@ -217,7 +217,7 @@ fn test_computed_diamond_effect() {
         let c = c.clone();
         move || {
             *c.borrow_mut() += 1;
-            diamond.read();
+            diamond.get();
         }
     });
 

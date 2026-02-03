@@ -55,8 +55,7 @@ use crate::runtime::REACTIVE_SYSTEM;
 /// });
 /// ```
 pub fn provide_context<T: 'static>(value: T) {
-    REACTIVE_SYSTEM.with(|ctx| unsafe {
-        let ctx = &mut *ctx.get();
+    REACTIVE_SYSTEM.with(|ctx| {
         ctx.provide_context(value);
     });
 }
@@ -104,10 +103,7 @@ pub fn provide_context<T: 'static>(value: T) {
 /// assert!(use_context::<Theme>().is_none());
 /// ```
 pub fn use_context<T: 'static + Clone>() -> Option<T> {
-    REACTIVE_SYSTEM.with(|ctx| unsafe {
-        let ctx = &mut *ctx.get();
-        ctx.use_context()
-    })
+    REACTIVE_SYSTEM.with(|ctx| ctx.use_context())
 }
 
 /// Check if a context of the given type exists in the current or any parent scope.
@@ -135,10 +131,7 @@ pub fn use_context<T: 'static + Clone>() -> Option<T> {
 /// });
 /// ```
 pub fn has_context<T: 'static>() -> bool {
-    REACTIVE_SYSTEM.with(|ctx| unsafe {
-        let ctx = &*ctx.get();
-        ctx.has_context::<T>()
-    })
+    REACTIVE_SYSTEM.with(|ctx| ctx.has_context::<T>())
 }
 
 #[cfg(test)]

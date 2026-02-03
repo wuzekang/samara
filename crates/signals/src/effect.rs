@@ -1,5 +1,5 @@
 use crate::runtime::REACTIVE_SYSTEM;
-use crate::types::NodeKey;
+use crate::types::{Location, NodeKey, caller};
 
 #[derive(Clone, Copy)]
 pub struct Effect {
@@ -7,35 +7,26 @@ pub struct Effect {
 }
 
 impl Effect {
-    pub fn new<F: Fn() + 'static>(
-        effect: F,
-        caller: &'static std::panic::Location<'static>,
-    ) -> Self {
-        let node = REACTIVE_SYSTEM.with(move |ctx| unsafe {
-            let ctx = &mut *ctx.get();
-            ctx.new_effect(effect, caller)
-        });
+    pub fn new<F: FnMut() + 'static>(effect: F, caller: Location) -> Self {
+        let node = REACTIVE_SYSTEM.with(move |ctx| ctx.new_effect(effect, caller));
         Self { node }
     }
     pub fn dispose(&self) {
-        REACTIVE_SYSTEM.with(|ctx| unsafe {
-            let ctx = &mut *ctx.get();
+        REACTIVE_SYSTEM.with(|ctx| {
             ctx.dispose_scope(self.node);
         });
     }
 }
 
 #[track_caller]
-pub fn effect<F: Fn() + 'static>(effect: F) -> Effect {
-    Effect::new(effect, std::panic::Location::caller())
+pub fn effect<F: FnMut() + 'static>(effect: F) -> Effect {
+    Effect::new(effect, caller())
 }
 
 #[track_caller]
 pub fn trigger<F: Fn() + 'static>(f: F) {
-    REACTIVE_SYSTEM.with(move |ctx| unsafe {
-        let ctx = &mut *ctx.get();
-
-        ctx.trigger(f, std::panic::Location::caller());
+    REACTIVE_SYSTEM.with(move |ctx| {
+        ctx.trigger(f, caller());
     });
 }
 
@@ -60,27 +51,19 @@ pub fn trigger<F: Fn() + 'static>(f: F) {
 /// scope.dispose(); // Prints: "Cleaning up 1"
 /// ```
 pub fn on_cleanup<F: FnOnce() + 'static>(f: F) {
-    REACTIVE_SYSTEM.with(|ctx| unsafe {
-        let ctx = &mut *ctx.get();
-        let current = ctx.current_scope.get();
-        if let Some(cleanups) = ctx.cleanups.get_mut(current) {
-            cleanups.push(Box::new(f));
-        } else {
-            ctx.cleanups.insert(current, vec![Box::new(f)]);
-        }
+    REACTIVE_SYSTEM.with(|ctx| {
+        ctx.on_cleanup(f);
     });
 }
 
 pub fn start_batch() {
-    REACTIVE_SYSTEM.with(|ctx| unsafe {
-        let ctx = &mut *ctx.get();
+    REACTIVE_SYSTEM.with(|ctx| {
         ctx.start_batch();
     });
 }
 
 pub fn end_batch() {
-    REACTIVE_SYSTEM.with(|ctx| unsafe {
-        let ctx = &mut *ctx.get();
+    REACTIVE_SYSTEM.with(|ctx| {
         ctx.end_batch();
     });
 }
@@ -89,15 +72,9 @@ pub fn end_batch() {
 ///
 /// Returns a tuple of `(nodes_count, links_count)`.
 pub fn count() -> (usize, usize) {
-    REACTIVE_SYSTEM.with(|ctx| unsafe {
-        let ctx = &mut *ctx.get();
-        ctx.count()
-    })
+    REACTIVE_SYSTEM.with(|ctx| ctx.count())
 }
 
 pub fn serialize() -> String {
-    REACTIVE_SYSTEM.with(|ctx| unsafe {
-        let ctx = &mut *ctx.get();
-        serde_json::ser::to_string(ctx).unwrap()
-    })
+    REACTIVE_SYSTEM.with(|ctx| serde_json::ser::to_string(ctx).unwrap())
 }

@@ -1,9 +1,9 @@
-use serde::{Serialize, Serializer, ser::SerializeStruct};
-use std::panic::Location;
+use ::slotmap::new_key_type;
+use serde::Serialize;
+use std::rc::Rc;
 use std::{any::Any, cell::Cell, fmt::Debug};
 
-use ::slotmap::new_key_type;
-
+mod refcell;
 mod slotmap;
 
 new_key_type! {
@@ -176,12 +176,12 @@ impl Drop for SignalNode {
 }
 
 pub struct EffectNode {
-    pub effect: Box<dyn Fn()>,
+    pub effect: Rc<RefCell<dyn FnMut()>>,
 }
 
 pub enum NodeInner {
     Effect(EffectNode),
-    Computed(Box<dyn ComputedOps>),
+    Computed(Rc<RefCell<dyn ComputedOps>>),
     Signal(SignalNode),
     None,
 }
@@ -213,21 +213,6 @@ impl Debug for NodeInner {
     }
 }
 
-/// Custom serialization function for Location to capture call site information
-fn serialize_location<S>(
-    location: &&'static Location<'static>,
-    serializer: S,
-) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    let mut state = serializer.serialize_struct("Location", 3)?;
-    state.serialize_field("file", location.file())?;
-    state.serialize_field("line", &location.line())?;
-    state.serialize_field("col", &location.column())?;
-    state.end()
-}
-
 #[derive(Debug, Serialize)]
 pub struct ReactiveNode {
     pub inner: NodeInner,
@@ -241,7 +226,7 @@ pub struct ReactiveNode {
     pub prev: Option<NodeKey>,
     pub flags: ReactiveFlags,
     #[serde(serialize_with = "serialize_location")]
-    pub caller: &'static Location<'static>,
+    pub caller: Location,
 }
 
 impl ReactiveNode {
@@ -250,7 +235,7 @@ impl ReactiveNode {
         inner: NodeInner,
         flags: ReactiveFlags,
         parent: Option<NodeKey>,
-        caller: &'static Location<'static>,
+        caller: Location,
     ) -> Self {
         Self {
             inner,
@@ -280,4 +265,12 @@ pub struct Link {
 }
 
 pub use crate::flags::ReactiveFlags;
+
+use crate::system::ReactiveSystem;
+#[cfg(debug_assertions)]
+pub use crate::types::refcell::RefCell;
+#[cfg(not(debug_assertions))]
+pub use crate::types::refcell::UnsafeRefCell as RefCell;
+
+pub use crate::types::refcell::{Location, UnsafeBox, caller, serialize_location};
 pub use crate::types::slotmap::UnsafeSlotMap;

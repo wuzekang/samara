@@ -1,4 +1,7 @@
-use crate::types::{Link, LinkKey, NodeKey, ReactiveFlags};
+use crate::{
+    system::ReactiveSystemRef,
+    types::{Link, LinkKey, NodeKey, ReactiveFlags},
+};
 
 impl super::ReactiveSystem {
     /// Notify effects that need to run
@@ -112,36 +115,41 @@ impl super::ReactiveSystem {
     }
 
     /// Check if a node is dirty and needs updating
-    pub fn check_dirty(&mut self, mut link: LinkKey, mut sub: NodeKey) -> bool {
+    pub fn check_dirty(this: ReactiveSystemRef<Self>, mut link: LinkKey, mut sub: NodeKey) -> bool {
         let mut check_depth = 0;
         let mut dirty = false;
-        self.stack.clear();
+        this.borrow_mut().stack.clear();
         'top: loop {
-            let dep = self.links[link].dep;
-            let flags = self.nodes[dep].flags;
+            let dep = this.borrow().links[link].dep;
+            let flags = this.borrow().nodes[dep].flags;
 
-            if self.nodes[sub].flags.contains(ReactiveFlags::DIRTY) {
+            if this.borrow().nodes[sub]
+                .flags
+                .contains(ReactiveFlags::DIRTY)
+            {
                 dirty = true;
             } else if flags.contains(ReactiveFlags::MUTABLE | ReactiveFlags::DIRTY) {
-                if self.update(dep) {
-                    let subs = self.nodes[dep].subs.unwrap();
-                    if self.links[subs].next_sub.is_some() {
-                        self.shallow_propagate(subs);
+                if Self::update(this.clone(), dep) {
+                    let subs = this.borrow_mut().nodes[dep].subs.unwrap();
+                    if this.borrow_mut().links[subs].next_sub.is_some() {
+                        this.borrow_mut().shallow_propagate(subs);
                     }
                     dirty = true;
                 }
             } else if flags.contains(ReactiveFlags::MUTABLE | ReactiveFlags::PENDING) {
-                if self.links[link].next_sub.is_some() || self.links[link].prev_sub.is_some() {
-                    self.stack.push(link);
+                if this.borrow_mut().links[link].next_sub.is_some()
+                    || this.borrow_mut().links[link].prev_sub.is_some()
+                {
+                    this.borrow_mut().stack.push(link);
                 }
-                link = self.nodes[dep].deps.unwrap();
+                link = this.borrow_mut().nodes[dep].deps.unwrap();
                 sub = dep;
                 check_depth += 1;
                 continue 'top;
             }
 
             if !dirty {
-                if let Some(next_dep) = self.links[link].next_dep {
+                if let Some(next_dep) = this.borrow_mut().links[link].next_dep {
                     link = next_dep;
                     continue 'top;
                 }
@@ -149,30 +157,32 @@ impl super::ReactiveSystem {
 
             while check_depth > 0 {
                 check_depth -= 1;
-                let first_sub = self.nodes[sub].subs.unwrap();
-                let has_multiple_subs = self.links[first_sub].next_sub.is_some();
+                let first_sub = this.borrow_mut().nodes[sub].subs.unwrap();
+                let has_multiple_subs = this.borrow_mut().links[first_sub].next_sub.is_some();
 
                 if has_multiple_subs {
-                    link = self.stack.pop().unwrap();
+                    link = this.borrow_mut().stack.pop().unwrap();
                 } else {
                     link = first_sub;
                 }
 
                 if dirty {
-                    if self.update(sub) {
+                    if Self::update(this.clone(), sub) {
                         if has_multiple_subs {
-                            self.shallow_propagate(first_sub);
+                            this.borrow_mut().shallow_propagate(first_sub);
                         }
-                        sub = self.links[link].sub;
+                        sub = this.borrow_mut().links[link].sub;
                         continue;
                     }
                     dirty = false;
                 } else {
-                    self.nodes[sub].flags.remove(ReactiveFlags::PENDING);
+                    this.borrow_mut().nodes[sub]
+                        .flags
+                        .remove(ReactiveFlags::PENDING);
                 }
 
-                sub = self.links[link].sub;
-                if let Some(next_dep) = self.links[link].next_dep {
+                sub = this.borrow_mut().links[link].sub;
+                if let Some(next_dep) = this.borrow_mut().links[link].next_dep {
                     link = next_dep;
                     continue 'top;
                 }

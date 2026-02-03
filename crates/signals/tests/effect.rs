@@ -361,3 +361,23 @@ fn test_effect_handle_flags_indirectly_updated() {
     a.set(true);
     assert_eq!(*triggers.borrow(), 2);
 }
+
+#[test]
+fn test_circular_effect_dependencies() {
+    let a = signal(0);
+    let b = signal(0);
+    let c = signal(vec![]);
+    effect(move || {
+        b.track();
+        c.write().push(0);
+        a.update(|v| *v += 1);
+    });
+
+    effect(move || {
+        a.track();
+        c.write().push(1);
+        b.update(|v| *v += 1);
+    });
+
+    assert_eq!(c.get(), vec![0, 1, 0]);
+}
