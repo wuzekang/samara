@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Test (debug)
+        run: cargo test --workspace
+      - name: Test (release)
+        run: cargo test --release --workspace
+      - name: Bench compiles
+        run: cargo bench --no-run
+
+  miri:
+    runs-on: ubuntu-latest
+    env:
+      MIRIFLAGS: -Zmiri-ignore-leaks
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri
+      - uses: Swatinem/rust-cache@v2
+      - name: Miri on all integration tests except async
+        # The system is per-thread thread_local and never dropped; leaks are
+        # by design, hence -Zmiri-ignore-leaks. The async suite needs a real
+        # timer wheel and is skipped.
+        run: |
+          cargo miri setup
+          for t in $(ls crates/signals/tests/*.rs | xargs -n1 basename | sed 's/\.rs$//'); do
+            [ "$t" = "async" ] && continue
+            cargo miri test --test "$t"
+          done
