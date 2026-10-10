@@ -4,7 +4,6 @@ use crate::{
     flags::ReactiveFlags,
     types::{NodeInner, NodeKey, ReactiveNode, SignalNode},
 };
-use std::any::Any;
 
 impl super::ReactiveSystem {
     /// Create a new signal node
@@ -13,7 +12,7 @@ impl super::ReactiveSystem {
         use std::cell::Cell;
         let node = self.nodes.insert(ReactiveNode::new(
             NodeInner::Signal(SignalNode {
-                value: Box::leak(Box::new(initial)),
+                value: Box::new(initial),
                 borrow_state: Cell::new(BorrowState::Unused),
             }),
             ReactiveFlags::MUTABLE,
@@ -41,7 +40,10 @@ impl super::ReactiveSystem {
     /// Track a signal access for reactive dependencies
     #[inline]
     pub fn signal_track(&mut self, node: NodeKey) {
-        if self.nodes[node]
+        if self
+            .nodes
+            .get(node)
+            .expect("Signal accessed after cleanup")
             .flags
             .contains(crate::types::ReactiveFlags::DIRTY)
         {
@@ -70,35 +72,49 @@ impl super::ReactiveSystem {
     /// Get a signal value (with tracking)
     #[inline]
     pub fn signal_get<T: 'static + Clone>(&mut self, node: NodeKey) -> T {
-        unsafe { &*(self.signal(node).value as *const dyn Any as *const T) }.clone()
+        let signal = self.signal(node);
+        signal.borrow_read_check();
+        let value = signal
+            .value
+            .downcast_ref::<T>()
+            .expect("Signal type mismatch")
+            .clone();
+        signal.release_read();
+        value
     }
 
     /// Notify subscribers of a signal change
     #[inline]
-    pub fn signal_notify(this: ReactiveSystemRef<Self>, node: NodeKey) {
+    pub fn signal_notify(this: &ReactiveSystemRef<Self>, node: NodeKey) {
         let subs = {
-            let node = &mut this.borrow_mut().nodes[node];
+            let mut sys = this.borrow_mut();
+            let node = sys
+                .nodes
+                .get_mut(node)
+                .expect("Signal accessed after cleanup");
             node.flags = ReactiveFlags::MUTABLE | ReactiveFlags::DIRTY;
-            let subs = node.subs;
-            subs
+            node.subs
         };
 
         if let Some(subs) = subs {
             this.borrow_mut().propagate(subs);
             if this.borrow_mut().batch_depth == 0 {
-                Self::flush(this.clone());
+                Self::flush(this);
             }
         }
     }
 
     /// Set a signal value
     #[inline]
-    pub fn signal_set<T: 'static>(this: ReactiveSystemRef<Self>, node: NodeKey, value: T) {
+    pub fn signal_set<T: 'static>(this: &ReactiveSystemRef<Self>, node: NodeKey, value: T) {
         {
-            let mut binding = this.borrow_mut();
-            let signal = binding.signal(node);
+            let mut sys = this.borrow_mut();
+            let signal = sys.signal(node);
             signal.borrow_write_check();
-            unsafe { *(signal.value as *mut dyn Any as *mut T) = value };
+            *signal
+                .value
+                .downcast_mut::<T>()
+                .expect("Signal type mismatch") = value;
             signal.release_write();
         }
         Self::signal_notify(this, node);
@@ -107,14 +123,34 @@ impl super::ReactiveSystem {
     /// Update a signal value
     #[inline]
     pub fn signal_update<T: 'static>(
-        this: ReactiveSystemRef<Self>,
+        this: &ReactiveSystemRef<Self>,
         node: NodeKey,
         f: impl FnOnce(&mut T) -> (),
     ) {
+        // Swap the value out so `f` runs with NO system borrow held: `f` may
+        // re-enter the reactive system (set other signals, dispose scopes...)
+        // without aliasing. Box<()> is a ZST, so the placeholder never
+        // allocates.
+        let mut taken = {
+            let mut sys = this.borrow_mut();
+            let signal = sys.signal(node);
+            signal.borrow_write_check();
+            std::mem::replace(&mut signal.value, Box::new(()))
+        };
+
+        let slot = taken.downcast_mut::<T>().expect("Signal type mismatch");
+        f(slot);
+
         {
-            let mut binding = this.borrow_mut();
-            let signal = binding.signal(node);
-            f(unsafe { &mut *(signal.value as *mut dyn Any as *mut T) });
+            let mut sys = this.borrow_mut();
+            if !sys.nodes.contains_key(node) {
+                // The owning scope was disposed inside f; `taken` still owns
+                // the value and frees it when dropped on return.
+                return;
+            }
+            let signal = sys.signal(node);
+            signal.value = taken;
+            signal.release_write();
         }
         Self::signal_notify(this, node);
     }

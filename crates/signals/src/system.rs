@@ -1,6 +1,5 @@
 use crate::types::{
-    Link, LinkKey, NodeInner, NodeKey, ReactiveFlags, ReactiveNode, UnsafeBox, UnsafeSlotMap,
-    caller,
+    Link, LinkKey, NodeInner, NodeKey, ReactiveFlags, ReactiveNode, RefCell, UnsafeSlotMap, caller,
 };
 use serde::Serialize;
 use slotmap::SparseSecondaryMap;
@@ -68,8 +67,10 @@ impl ReactiveSystem {
     }
 }
 
-// #[cfg(debug_assertions)]
-// pub type ReactiveSystemRef<T> = Rc<RefCell<T>>;
-
-// #[cfg(not(debug_assertions))]
-pub type ReactiveSystemRef<T> = UnsafeBox<T>;
+/// Shared, borrow-checked handle to the reactive system.
+///
+/// One `Rc<RefCell<_>>` per thread (see `runtime::REACTIVE_SYSTEM`).
+/// All borrows are statement- or phase-scoped; user callbacks (effect
+/// bodies, getters, update fns) must only run while NO borrow is held,
+/// so user code re-enters the system sequentially instead of aliasing it.
+pub type ReactiveSystemRef<T> = Rc<RefCell<T>>;

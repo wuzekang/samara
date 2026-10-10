@@ -14,7 +14,9 @@ new_key_type! {
 /// Trait for type-erased derived node operations
 pub trait ComputedOps {
     fn update(&mut self) -> bool;
-    fn as_any(&self) -> &dyn Any;
+    /// The current value as `&dyn Any`; panics on a never-evaluated node.
+    /// Entry points must run `computed_ensure_fresh` first.
+    fn value_any(&self) -> &dyn Any;
 }
 
 /// Computed node without equality check (always dirty after update)
@@ -40,7 +42,7 @@ impl<T: 'static> ComputedOps for ComputedNodeInner<T> {
     }
 
     #[inline]
-    fn as_any(&self) -> &dyn Any {
+    fn value_any(&self) -> &dyn Any {
         self.value.as_ref().unwrap()
     }
 }
@@ -90,7 +92,7 @@ impl<T: PartialEq + 'static> ComputedOps for MemoNodeInner<T> {
     }
 
     #[inline]
-    fn as_any(&self) -> &dyn Any {
+    fn value_any(&self) -> &dyn Any {
         self.value()
     }
 }
@@ -104,7 +106,7 @@ pub enum BorrowState {
 }
 
 pub struct SignalNode {
-    pub value: *mut dyn Any,
+    pub value: Box<dyn Any>,
     pub borrow_state: Cell<BorrowState>,
 }
 
@@ -163,14 +165,6 @@ impl SignalNode {
                 self.borrow_state.set(BorrowState::Unused);
             }
             _ => panic!("Invalid borrow state during write release"),
-        }
-    }
-}
-
-impl Drop for SignalNode {
-    fn drop(&mut self) {
-        unsafe {
-            let _ = Box::from_raw(self.value);
         }
     }
 }
@@ -266,11 +260,7 @@ pub struct Link {
 
 pub use crate::flags::ReactiveFlags;
 
-use crate::system::ReactiveSystem;
-#[cfg(debug_assertions)]
 pub use crate::types::refcell::RefCell;
-#[cfg(not(debug_assertions))]
-pub use crate::types::refcell::UnsafeRefCell as RefCell;
 
-pub use crate::types::refcell::{Location, UnsafeBox, caller, serialize_location};
+pub use crate::types::refcell::{Location, caller, serialize_location};
 pub use crate::types::slotmap::UnsafeSlotMap;

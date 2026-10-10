@@ -6,14 +6,14 @@ use std::rc::Rc;
 impl super::ReactiveSystem {
     /// Create a new effect node
     pub fn new_effect<F: FnMut() + 'static>(
-        this: ReactiveSystemRef<Self>,
+        this: &ReactiveSystemRef<Self>,
         effect: F,
         caller: Location,
     ) -> NodeKey {
         let effect = Rc::new(RefCell::new(effect));
 
         let (prev_scope, prev_sub, node) = {
-            let this = this.borrow_mut();
+            let mut this = this.borrow_mut();
             let parent_scope = this.current_scope.get();
 
             // Create ONE node that is both the effect AND its scope
@@ -43,7 +43,7 @@ impl super::ReactiveSystem {
 
         (effect.borrow_mut())();
 
-        let this = this.borrow_mut();
+        let mut this = this.borrow_mut();
 
         // Restore parent scope
         this.current_scope.set(prev_scope);
@@ -54,7 +54,7 @@ impl super::ReactiveSystem {
 
     /// Create a new scope node
     pub fn new_scope<F: FnOnce() + 'static>(
-        this: ReactiveSystemRef<Self>,
+        this: &ReactiveSystemRef<Self>,
         f: F,
         caller: Location,
     ) -> NodeKey {
@@ -92,6 +92,9 @@ impl super::ReactiveSystem {
 
     /// Create a new child scope node with an explicit parent scope
     pub fn new_child_scope(&mut self, parent: NodeKey, caller: Location) -> NodeKey {
+        self.nodes
+            .get(parent)
+            .expect("Scope accessed after cleanup");
         // Create scope node with explicit parent
         let scope_node = self.nodes.insert(ReactiveNode::new(
             NodeInner::None,
@@ -107,61 +110,67 @@ impl super::ReactiveSystem {
     }
 
     /// Run an effect
-    pub fn run(this: ReactiveSystemRef<Self>, node: NodeKey) {
-        let Some((flags, deps)) = this
-            .borrow()
-            .nodes
-            .get(node)
-            .map(|item| (item.flags, item.deps))
-        else {
+    pub fn run(this: &ReactiveSystemRef<Self>, node: NodeKey) {
+        let flags_deps = {
+            let sys = this.borrow();
+            sys.nodes.get(node).map(|item| (item.flags, item.deps))
+        };
+        let Some((flags, deps)) = flags_deps else {
             return;
         };
         if flags.contains(ReactiveFlags::DIRTY)
             || (flags.contains(ReactiveFlags::PENDING)
-                && Self::check_dirty(this.clone(), deps.unwrap(), node))
+                && Self::check_dirty(this, deps.unwrap(), node))
         {
-            this.borrow_mut().cycle += 1;
-            this.borrow_mut().nodes[node].deps_tail = None;
-            this.borrow_mut().nodes[node].flags =
-                ReactiveFlags::WATCHING | ReactiveFlags::RECURSED_CHECK;
-            Self::cleanup_scope(this.clone(), node);
+            {
+                let mut sys = this.borrow_mut();
+                sys.cycle += 1;
+                sys.nodes[node].deps_tail = None;
+                sys.nodes[node].flags = ReactiveFlags::WATCHING | ReactiveFlags::RECURSED_CHECK;
+            }
+
+            // cleanup_scope runs user cleanup callbacks — no borrow held inside.
+            Self::cleanup_scope(this, node);
 
             // Clean up children from previous execution
             // This prevents memory leaks when effects run multiple times
-            this.borrow_mut().purge_child(node);
-
-            let effect = if let NodeInner::Effect(EffectNode { effect }) =
-                &this.borrow_mut().nodes[node].inner
-            {
-                Some(effect.clone())
-            } else {
-                None
+            let (effect, prev_scope, prev_sub) = {
+                let mut sys = this.borrow_mut();
+                sys.purge_child(node);
+                let effect = if let NodeInner::Effect(EffectNode { effect }) = &sys.nodes[node]
+                    .inner
+                {
+                    Some(effect.clone())
+                } else {
+                    None
+                };
+                let prev_sub = sys.set_active_sub(Some(node));
+                // Set this node as current scope during effect execution
+                let prev_scope = sys.current_scope.get();
+                sys.current_scope.set(node);
+                (effect, prev_scope, prev_sub)
             };
 
-            let prev_sub = this.borrow_mut().set_active_sub(Some(node));
-            // Set this node as current scope during effect execution
-            let prev_scope = this.borrow_mut().current_scope.get();
-            this.borrow_mut().current_scope.set(node);
-
+            // Effect body runs here (user code) — no system borrow held.
             if let Some(effect) = effect {
                 (effect.borrow_mut())();
             }
 
             // Restore previous scope
-            this.borrow_mut().current_scope.set(prev_scope);
-            this.borrow_mut().active_sub.set(prev_sub);
-
-            this.borrow_mut().nodes[node]
-                .flags
-                .remove(ReactiveFlags::RECURSED_CHECK);
-            this.borrow_mut().purge_deps(node, false);
+            {
+                let mut sys = this.borrow_mut();
+                sys.current_scope.set(prev_scope);
+                sys.active_sub.set(prev_sub);
+                sys.nodes[node].flags.remove(ReactiveFlags::RECURSED_CHECK);
+                sys.purge_deps(node, false);
+            }
         } else {
             this.borrow_mut().nodes[node].flags = ReactiveFlags::WATCHING;
         }
     }
 
     /// Trigger a reactive function
-    pub fn trigger<F: Fn() + 'static>(this: ReactiveSystemRef<Self>, f: F, caller: Location) {
+    pub fn trigger<F: Fn() + 'static>(this: &ReactiveSystemRef<Self>, f: F, caller: Location) {
         // Create a temporary subscriber node
         let parent = this.borrow().current_scope.get();
         let sub = this.borrow_mut().nodes.insert(ReactiveNode::new(
@@ -178,8 +187,8 @@ impl super::ReactiveSystem {
         // Unlink all dependencies
         let mut current = this.borrow().nodes[sub].deps;
         while let Some(link_key) = current {
-            let Link { dep, next_sub, .. } = this.borrow().links[link_key];
-            current = next_sub;
+            let Link { dep, next_dep, .. } = this.borrow().links[link_key];
+            current = next_dep;
             this.borrow_mut().unlink(link_key);
 
             let subs = this.borrow().nodes[dep].subs;
@@ -191,7 +200,7 @@ impl super::ReactiveSystem {
         }
 
         if this.borrow().batch_depth == 0 {
-            Self::flush(this.clone());
+            Self::flush(this);
         }
 
         // Remove the temporary node

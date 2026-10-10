@@ -1,4 +1,6 @@
 use samara_signals::*;
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::time::Duration;
@@ -319,9 +321,60 @@ async fn test_async_resource() {
 
     s.set(3);
     assert_eq!(value.get(), Some(4));
-    assert_eq!(loading.get(), false);
+    assert!(loading.get()); // 重取期间 loading 回到 true,旧值保留
 
     join().await;
     assert_eq!(value.get(), Some(6));
-    assert_eq!(loading.get(), false);
+    assert!(!loading.get());
+}
+
+#[tokio::test]
+async fn test_resource_fetches_initially() {
+    let r = resource(|| async { 42 });
+    assert!(r.loading.get());
+    join().await;
+    assert_eq!(r.value.get(), Some(42));
+    assert!(!r.loading.get());
+}
+
+#[tokio::test]
+async fn test_resource_refetches_on_source_change() {
+    let src = signal(1i32);
+    let r = resource(move || {
+        let n = src.get(); // tracked
+        async move { n * 2 }
+    });
+    join().await;
+    assert_eq!(r.value.get(), Some(2));
+
+    src.set(5);
+    // 重取同步开始:loading 回到 true,旧值保留
+    assert!(r.loading.get());
+    assert_eq!(r.value.get(), Some(2));
+    join().await;
+    assert_eq!(r.value.get(), Some(10));
+    assert!(!r.loading.get());
+}
+
+#[tokio::test]
+async fn test_resource_notifies_value_readers() {
+    let src = signal(1i32);
+    let r = resource(move || {
+        let n = src.get();
+        async move { n * 2 }
+    });
+
+    let seen = Rc::new(RefCell::new(Vec::<Option<i32>>::new()));
+    let seen_clone = seen.clone();
+    let _e = effect(move || {
+        seen_clone.borrow_mut().push(r.value.get());
+    });
+    assert_eq!(*seen.borrow(), vec![None]);
+
+    join().await; // 首次取数完成
+    assert_eq!(*seen.borrow(), vec![None, Some(2)]);
+
+    src.set(5);
+    join().await; // 重取完成
+    assert_eq!(*seen.borrow(), vec![None, Some(2), Some(10)]);
 }

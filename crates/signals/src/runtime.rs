@@ -1,6 +1,7 @@
 use crate::system::ReactiveSystemRef;
-use crate::types::Location;
+use crate::types::{Location, RefCell};
 use crate::{NodeKey, system::ReactiveSystem};
+use std::rc::Rc;
 
 pub mod executor;
 
@@ -15,7 +16,7 @@ pub struct ReactiveRuntime {
 impl ReactiveRuntime {
     pub fn new() -> Self {
         Self {
-            inner: ReactiveSystemRef::new(ReactiveSystem::new()),
+            inner: Rc::new(RefCell::new(ReactiveSystem::new())),
         }
     }
 
@@ -37,12 +38,12 @@ impl ReactiveRuntime {
 
     #[inline]
     pub fn new_effect<F: FnMut() + 'static>(&self, effect: F, caller: Location) -> NodeKey {
-        ReactiveSystem::new_effect(self.inner.clone(), effect, caller)
+        ReactiveSystem::new_effect(&self.inner, effect, caller)
     }
 
     #[inline]
     pub fn new_scope<F: FnOnce() + 'static>(&self, f: F, caller: Location) -> NodeKey {
-        ReactiveSystem::new_scope(self.inner.clone(), f, caller)
+        ReactiveSystem::new_scope(&self.inner, f, caller)
     }
 
     #[inline]
@@ -52,12 +53,18 @@ impl ReactiveRuntime {
 
     #[inline]
     pub fn trigger<F: Fn() + 'static>(&self, f: F, caller: Location) {
-        ReactiveSystem::trigger(self.inner.clone(), f, caller);
+        ReactiveSystem::trigger(&self.inner, f, caller);
     }
 
     #[inline]
     pub fn set_active_sub(&self, sub: Option<NodeKey>) -> Option<NodeKey> {
         self.inner.borrow().set_active_sub(sub)
+    }
+
+    /// Whether the given node key still refers to a live node.
+    #[inline]
+    pub fn node_exists(&self, node: NodeKey) -> bool {
+        self.inner.borrow().nodes.contains_key(node)
     }
 
     #[inline]
@@ -67,12 +74,12 @@ impl ReactiveRuntime {
 
     #[inline]
     pub fn dispose_scope(&self, node: NodeKey) {
-        ReactiveSystem::dispose_scope(self.inner.clone(), node);
+        ReactiveSystem::dispose_scope(&self.inner, node);
     }
 
     #[inline]
     pub fn cleanup(&self) {
-        ReactiveSystem::cleanup(self.inner.clone());
+        ReactiveSystem::cleanup(&self.inner);
     }
 
     #[inline]
@@ -94,7 +101,13 @@ impl ReactiveRuntime {
     }
 
     pub fn computed_track(&self, node: NodeKey) {
-        ReactiveSystem::computed_track(self.inner.clone(), node);
+        ReactiveSystem::computed_track(&self.inner, node);
+    }
+
+    /// Ensure the computed is evaluated and fresh without tracking it.
+    #[inline]
+    pub fn computed_peek(&self, node: NodeKey) {
+        ReactiveSystem::computed_ensure_fresh(&self.inner, node);
     }
 
     #[inline]
@@ -102,7 +115,7 @@ impl ReactiveRuntime {
     where
         T: Clone + 'static,
     {
-        ReactiveSystem::computed_get(self.inner.clone(), node)
+        ReactiveSystem::computed_get(&self.inner, node)
     }
 
     #[inline]
@@ -110,9 +123,32 @@ impl ReactiveRuntime {
         self.inner.borrow_mut().signal_new(initial, caller)
     }
 
+    /// Shared, downcast-checked pointer to a signal's value (read guards).
+    ///
+    /// Contract: the pointer is only valid while the node is alive and its
+    /// value is not swapped out (signal update/with); guard derefs re-fetch
+    /// it on every access and must not hold it across scope disposal.
     #[inline]
-    pub fn signal_value(&self, node: NodeKey) -> *mut (dyn std::any::Any + 'static) {
-        self.inner.borrow_mut().signal(node).value
+    pub fn signal_value_ref<T: 'static>(&self, node: NodeKey) -> *const T {
+        let mut sys = self.inner.borrow_mut();
+        sys.signal(node)
+            .value
+            .downcast_ref::<T>()
+            .map(|v| v as *const T)
+            .expect("Signal type mismatch")
+    }
+
+    /// Unique, downcast-checked pointer to a signal's value (write guards).
+    ///
+    /// Same contract as `signal_value_ref`.
+    #[inline]
+    pub fn signal_value_mut<T: 'static>(&self, node: NodeKey) -> *mut T {
+        let mut sys = self.inner.borrow_mut();
+        sys.signal(node)
+            .value
+            .downcast_mut::<T>()
+            .map(|v| v as *mut T)
+            .expect("Signal type mismatch")
     }
 
     #[inline]
@@ -127,23 +163,44 @@ impl ReactiveRuntime {
 
     #[inline]
     pub fn signal_notify(&self, node: NodeKey) {
-        ReactiveSystem::signal_notify(self.inner.clone(), node);
+        ReactiveSystem::signal_notify(&self.inner, node);
     }
 
     #[inline]
     pub fn signal_set<T: 'static>(&self, node: NodeKey, value: T) {
-        ReactiveSystem::signal_set(self.inner.clone(), node, value);
+        ReactiveSystem::signal_set(&self.inner, node, value);
     }
 
+    /// Run f on a shared reference to the value, without tracking.
+    ///
+    /// The value is swapped out for a ZST placeholder so `f` runs with no
+    /// system borrow held and may re-enter the reactive system freely.
     #[inline]
     pub fn signal_with<T: 'static, O>(&self, node: NodeKey, f: impl FnOnce(&T) -> O) -> O {
-        let value = { self.inner.borrow_mut().signal(node).value };
-        f(unsafe { &*(value as *const dyn std::any::Any as *const T) })
+        let taken = {
+            let mut sys = self.inner.borrow_mut();
+            let signal = sys.signal(node);
+            signal.borrow_read_check();
+            std::mem::replace(&mut signal.value, Box::new(()))
+        };
+
+        let result = f(taken.downcast_ref::<T>().expect("Signal type mismatch"));
+
+        {
+            let mut sys = self.inner.borrow_mut();
+            if sys.nodes.contains_key(node) {
+                let signal = sys.signal(node);
+                signal.value = taken;
+                signal.release_read();
+            }
+            // else: scope disposed inside f; `taken` frees the value on drop.
+        }
+        result
     }
 
     #[inline]
     pub fn signal_update<T: 'static>(&self, node: NodeKey, f: impl FnOnce(&mut T) -> ()) {
-        ReactiveSystem::signal_update(self.inner.clone(), node, f);
+        ReactiveSystem::signal_update(&self.inner, node, f);
     }
 
     #[inline]
@@ -173,7 +230,7 @@ impl ReactiveRuntime {
 
     #[inline]
     pub fn end_batch(&self) {
-        ReactiveSystem::end_batch(self.inner.clone());
+        ReactiveSystem::end_batch(&self.inner);
     }
 
     #[inline]

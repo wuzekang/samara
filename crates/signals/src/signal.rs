@@ -125,33 +125,31 @@ impl<T> SignalWriteGuard<'_, T> {
 impl<T> Drop for SignalWriteGuard<'_, T> {
     fn drop(&mut self) {
         REACTIVE_SYSTEM.with(move |ctx| {
-            // Only release if node still exists
-            // if !ctx.nodes.contains_key(self.node) {
-            //     return;
-            // }
-            // Release borrow first
+            // The scope may have been disposed while this guard was alive;
+            // the node and its borrow state are gone, nothing to release.
+            if !ctx.node_exists(self.node) {
+                return;
+            }
+            // Release borrow first, then notify subscribers
             ctx.signal_release_write(self.node);
-            // Then notify subscribers
             ctx.signal_notify(self.node);
         });
     }
 }
 
-impl<T> Deref for SignalWriteGuard<'_, T> {
+impl<T: 'static> Deref for SignalWriteGuard<'_, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        // Check validity on every deref
-        let value = REACTIVE_SYSTEM.with(|ctx| ctx.signal_value(self.node));
-        unsafe { &*(value as *const T) }
+        let value = REACTIVE_SYSTEM.with(|ctx| ctx.signal_value_ref::<T>(self.node));
+        unsafe { &*value }
     }
 }
 
-impl<T> DerefMut for SignalWriteGuard<'_, T> {
+impl<T: 'static> DerefMut for SignalWriteGuard<'_, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        // Check validity on every deref
-        let value = REACTIVE_SYSTEM.with(|ctx| ctx.signal_value(self.node));
-        unsafe { &mut *(value as *mut T) }
+        let value = REACTIVE_SYSTEM.with(|ctx| ctx.signal_value_mut::<T>(self.node));
+        unsafe { &mut *value }
     }
 }
 
@@ -179,17 +177,21 @@ impl<T> SignalReadGuard<'_, T> {
 impl<T> Drop for SignalReadGuard<'_, T> {
     fn drop(&mut self) {
         REACTIVE_SYSTEM.with(move |ctx| {
+            // The scope may have been disposed while this guard was alive.
+            if !ctx.node_exists(self.node) {
+                return;
+            }
             ctx.signal_release_read(self.node);
         });
     }
 }
 
-impl<T> Deref for SignalReadGuard<'_, T> {
+impl<T: 'static> Deref for SignalReadGuard<'_, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        let value = REACTIVE_SYSTEM.with(|ctx| ctx.signal_value(self.node));
-        unsafe { &*(value as *const T) }
+        let value = REACTIVE_SYSTEM.with(|ctx| ctx.signal_value_ref::<T>(self.node));
+        unsafe { &*value }
     }
 }
 

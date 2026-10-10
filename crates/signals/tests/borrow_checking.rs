@@ -83,3 +83,29 @@ fn test_write_guard_prevents_set() {
     let _write_guard = s.write();
     s.set(100); // Panic - cannot set while writing
 }
+
+#[test]
+#[should_panic]
+fn test_write_guard_prevents_get() {
+    let s = signal(42i32);
+    let _write_guard = s.write();
+    let _ = s.get(); // Panic - get 也走读检查
+}
+
+#[test]
+#[should_panic]
+fn test_write_guard_prevents_with() {
+    let s = signal(42i32);
+    let _write_guard = s.write();
+    let _ = s.with(|v| *v); // Panic - with 也走读检查
+}
+
+#[test]
+#[should_panic]
+fn test_nested_update_same_signal_panics() {
+    let s = signal(42i32);
+    s.update(|v| {
+        *v += 1;
+        s.update(|v2| *v2 += 1); // Panic - 同一信号的嵌套写
+    });
+}

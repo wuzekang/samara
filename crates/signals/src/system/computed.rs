@@ -43,46 +43,71 @@ impl super::ReactiveSystem {
     }
 
     /// Track a computed access for reactive dependencies
-    pub fn computed_track(this: ReactiveSystemRef<Self>, node: NodeKey) {
-        let ReactiveNode {
-            flags, deps, subs, ..
-        } = this.borrow().nodes[node];
+    pub fn computed_track(this: &ReactiveSystemRef<Self>, node: NodeKey) {
+        Self::computed_ensure_fresh(this, node);
+
+        let mut sys = this.borrow_mut();
+        if let Some(sub) = sys.active_sub.get() {
+            let cycle = sys.cycle;
+            sys.link(node, sub, cycle);
+        }
+    }
+
+    /// Recompute the computed if dirty, pending, or never evaluated, without
+    /// subscribing the active subscriber.
+    ///
+    /// Invariant: must run before reading the value via `value_any()`, which
+    /// panics on a never-evaluated node.
+    pub fn computed_ensure_fresh(this: &ReactiveSystemRef<Self>, node: NodeKey) {
+        let (flags, deps, subs) = {
+            let sys = this.borrow();
+            let node = sys
+                .nodes
+                .get(node)
+                .expect("Computed accessed after cleanup");
+            (node.flags, node.deps, node.subs)
+        };
 
         // Check if dirty or pending
         if flags.contains(ReactiveFlags::DIRTY)
             || (flags.contains(ReactiveFlags::PENDING)
-                && (Self::check_dirty(this.clone(), deps.unwrap(), node))
-                || {
-                    this.borrow_mut().nodes[node]
-                        .flags
-                        .remove(ReactiveFlags::PENDING);
-                    false
-                })
+                && (Self::check_dirty(this, deps.unwrap(), node)
+                    || {
+                        this.borrow_mut().nodes[node]
+                            .flags
+                            .remove(ReactiveFlags::PENDING);
+                        false
+                    }))
         {
-            if Self::update_computed(this.clone(), node) {
+            if Self::update_computed(this, node) {
                 if let Some(subs) = subs {
                     this.borrow_mut().shallow_propagate(subs);
                 }
             }
         } else if flags.is_empty() {
-            Self::update_computed_inner(this.clone(), node);
-        }
-
-        let sub = this.borrow_mut().active_sub.get();
-        if let Some(sub) = sub {
-            let cycle = this.borrow().cycle;
-            this.borrow_mut().link(node, sub, cycle);
+            Self::update_computed_inner(this, node);
         }
     }
 
     /// Get a computed value (cloned, with tracking)
-    pub fn computed_get<T>(this: ReactiveSystemRef<Self>, node: NodeKey) -> T
+    pub fn computed_get<T>(this: &ReactiveSystemRef<Self>, node: NodeKey) -> T
     where
         T: Clone + 'static,
     {
-        Self::computed_track(this.clone(), node);
-        if let NodeInner::Computed(inner) = &this.borrow().nodes[node].inner {
-            unsafe { &*(inner.borrow().as_any() as *const dyn std::any::Any as *const T) }.clone()
+        Self::computed_track(this, node);
+        if let NodeInner::Computed(inner) = &this
+            .borrow()
+            .nodes
+            .get(node)
+            .expect("Computed accessed after cleanup")
+            .inner
+        {
+            let guard = inner.borrow();
+            guard
+                .value_any()
+                .downcast_ref::<T>()
+                .expect("Computed type mismatch")
+                .clone()
         } else {
             panic!("Node is not a Computed");
         }

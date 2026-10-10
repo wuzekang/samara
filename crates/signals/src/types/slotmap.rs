@@ -2,6 +2,13 @@ use std::ops::{Deref, DerefMut, Index, IndexMut};
 use serde::{Serialize, Serializer};
 use slotmap::{Key, SlotMap};
 
+// Unchecked-indexing map for the propagation hot paths.
+//
+// Contract: `Index`/`IndexMut` skip slotmap's key validation, so they are UB
+// on stale (removed) keys. They are only safe for keys the system itself
+// keeps alive by construction (link/node chains during propagation).
+// Any entry point reachable with a user-held handle must validate the key
+// via `get`/`get_mut` + `expect` before touching `[key]`.
 pub struct UnsafeSlotMap<K: Key, V>(SlotMap<K, V>);
 
 impl<K: Key, V> Default for UnsafeSlotMap<K, V> {

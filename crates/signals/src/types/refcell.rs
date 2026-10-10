@@ -221,13 +221,20 @@ impl<'b> BorrowRef<'b> {
     #[cfg_attr(not(debug_assertions), inline)]
     #[track_caller]
     fn new(borrow: &'b BorrowFlag) -> Option<BorrowRef<'b>> {
-        let flag = borrow.flag.get();
-        if flag == WRITING {
-            return None;
+        // Borrow checking is debug-only by design: the reactive system pays
+        // one guard pair per reentrancy boundary (getter/effect/update
+        // callbacks), which measured ~25% on the propagation benchmark.
+        // Release relies on the phase-borrow discipline that debug builds,
+        // the test suite, and Miri enforce.
+        #[cfg(debug_assertions)]
+        {
+            let flag = borrow.flag.get();
+            if flag == WRITING {
+                return None;
+            }
+            borrow.flag.set(flag + 1);
+            borrow.push(caller());
         }
-        borrow.flag.set(flag + 1);
-
-        borrow.push(caller());
         Some(BorrowRef { borrow: borrow })
     }
 }
@@ -235,10 +242,13 @@ impl<'b> BorrowRef<'b> {
 impl<'b> Drop for BorrowRef<'b> {
     #[inline]
     fn drop(&mut self) {
-        let flag = self.borrow.flag.get();
-        debug_assert!(flag != WRITING && flag != UNUSED);
-        self.borrow.flag.set(flag - 1);
-        self.borrow.pop();
+        #[cfg(debug_assertions)]
+        {
+            let flag = self.borrow.flag.get();
+            debug_assert!(flag != WRITING && flag != UNUSED);
+            self.borrow.flag.set(flag - 1);
+            self.borrow.pop();
+        }
     }
 }
 
@@ -270,11 +280,15 @@ impl<'b> BorrowRefMut<'b> {
     #[cfg_attr(not(debug_assertions), inline)]
     #[track_caller]
     fn new(borrow: &'b BorrowFlag) -> Option<BorrowRefMut<'b>> {
-        if borrow.flag.get() != UNUSED {
-            return None;
+        // See BorrowRef::new: checking is debug-only.
+        #[cfg(debug_assertions)]
+        {
+            if borrow.flag.get() != UNUSED {
+                return None;
+            }
+            borrow.flag.set(WRITING);
+            borrow.push(caller());
         }
-        borrow.flag.set(WRITING);
-        borrow.push(caller());
         Some(BorrowRefMut { borrow: borrow })
     }
 }
@@ -282,9 +296,12 @@ impl<'b> BorrowRefMut<'b> {
 impl<'b> Drop for BorrowRefMut<'b> {
     #[inline]
     fn drop(&mut self) {
-        debug_assert!(self.borrow.flag.get() == WRITING);
-        self.borrow.flag.set(UNUSED);
-        self.borrow.pop();
+        #[cfg(debug_assertions)]
+        {
+            debug_assert!(self.borrow.flag.get() == WRITING);
+            self.borrow.flag.set(UNUSED);
+            self.borrow.pop();
+        }
     }
 }
 
@@ -308,68 +325,3 @@ impl<'b, T: ?Sized> DerefMut for RefMut<'b, T> {
         self._value
     }
 }
-
-pub struct UnsafeRefCell<T: ?Sized> {
-    value: UnsafeCell<T>,
-}
-
-impl<T> UnsafeRefCell<T> {
-    pub fn new(value: T) -> UnsafeRefCell<T> {
-        UnsafeRefCell {
-            value: UnsafeCell::new(value),
-        }
-    }
-}
-
-impl<T: ?Sized> UnsafeRefCell<T> {
-    #[inline(always)]
-    pub fn borrow<'a>(&'a self) -> &'a T {
-        unsafe { &*self.value.get() }
-    }
-
-    #[inline(always)]
-    pub fn borrow_mut<'a>(&'a self) -> &'a mut T {
-        unsafe { &mut *self.value.get() }
-    }
-}
-
-pub struct UnsafeBox<T: ?Sized> {
-    value: *mut T,
-}
-
-impl<T> UnsafeBox<T> {
-    pub fn new(value: T) -> UnsafeBox<T> {
-        UnsafeBox {
-            value: Box::leak(Box::new(value)),
-        }
-    }
-}
-
-impl<T: ?Sized> UnsafeBox<T> {
-    #[inline(always)]
-    pub fn borrow<'a>(&'a self) -> &'a T {
-        unsafe { &*self.value }
-    }
-
-    #[inline(always)]
-    pub fn borrow_mut<'a>(&'a self) -> &'a mut T {
-        unsafe { &mut *self.value }
-    }
-}
-
-impl<T: Default> Default for UnsafeBox<T> {
-    fn default() -> Self {
-        UnsafeBox {
-            value: Box::leak(Box::new(T::default())),
-        }
-    }
-}
-
-impl<T> Clone for UnsafeBox<T> {
-    #[inline(always)]
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<T> Copy for UnsafeBox<T> {}

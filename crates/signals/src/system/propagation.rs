@@ -115,41 +115,50 @@ impl super::ReactiveSystem {
     }
 
     /// Check if a node is dirty and needs updating
-    pub fn check_dirty(this: ReactiveSystemRef<Self>, mut link: LinkKey, mut sub: NodeKey) -> bool {
+    pub fn check_dirty(this: &ReactiveSystemRef<Self>, mut link: LinkKey, mut sub: NodeKey) -> bool {
         let mut check_depth = 0;
         let mut dirty = false;
         this.borrow_mut().stack.clear();
         'top: loop {
-            let dep = this.borrow().links[link].dep;
-            let flags = this.borrow().nodes[dep].flags;
+            // Read phase: one guard covers all flag/link reads of this step.
+            let (dep, dep_flags, sub_dirty) = {
+                let sys = this.borrow();
+                let dep = sys.links[link].dep;
+                (
+                    dep,
+                    sys.nodes[dep].flags,
+                    sys.nodes[sub].flags.contains(ReactiveFlags::DIRTY),
+                )
+            };
 
-            if this.borrow().nodes[sub]
-                .flags
-                .contains(ReactiveFlags::DIRTY)
-            {
+            if sub_dirty {
                 dirty = true;
-            } else if flags.contains(ReactiveFlags::MUTABLE | ReactiveFlags::DIRTY) {
-                if Self::update(this.clone(), dep) {
-                    let subs = this.borrow_mut().nodes[dep].subs.unwrap();
-                    if this.borrow_mut().links[subs].next_sub.is_some() {
-                        this.borrow_mut().shallow_propagate(subs);
+            } else if dep_flags.contains(ReactiveFlags::MUTABLE | ReactiveFlags::DIRTY) {
+                // update() runs the dep's getter (user code) — no borrow held.
+                if Self::update(this, dep) {
+                    let mut sys = this.borrow_mut();
+                    let subs = sys.nodes[dep].subs.unwrap();
+                    if sys.links[subs].next_sub.is_some() {
+                        sys.shallow_propagate(subs);
                     }
                     dirty = true;
                 }
-            } else if flags.contains(ReactiveFlags::MUTABLE | ReactiveFlags::PENDING) {
-                if this.borrow_mut().links[link].next_sub.is_some()
-                    || this.borrow_mut().links[link].prev_sub.is_some()
-                {
-                    this.borrow_mut().stack.push(link);
-                }
-                link = this.borrow_mut().nodes[dep].deps.unwrap();
+            } else if dep_flags.contains(ReactiveFlags::MUTABLE | ReactiveFlags::PENDING) {
+                link = {
+                    let mut sys = this.borrow_mut();
+                    if sys.links[link].next_sub.is_some() || sys.links[link].prev_sub.is_some() {
+                        sys.stack.push(link);
+                    }
+                    sys.nodes[dep].deps.unwrap()
+                };
                 sub = dep;
                 check_depth += 1;
                 continue 'top;
             }
 
             if !dirty {
-                if let Some(next_dep) = this.borrow_mut().links[link].next_dep {
+                let next_dep = this.borrow().links[link].next_dep;
+                if let Some(next_dep) = next_dep {
                     link = next_dep;
                     continue 'top;
                 }
@@ -157,21 +166,26 @@ impl super::ReactiveSystem {
 
             while check_depth > 0 {
                 check_depth -= 1;
-                let first_sub = this.borrow_mut().nodes[sub].subs.unwrap();
-                let has_multiple_subs = this.borrow_mut().links[first_sub].next_sub.is_some();
-
-                if has_multiple_subs {
-                    link = this.borrow_mut().stack.pop().unwrap();
-                } else {
-                    link = first_sub;
-                }
+                let (first_sub, has_multiple_subs, next_link) = {
+                    let mut sys = this.borrow_mut();
+                    let first_sub = sys.nodes[sub].subs.unwrap();
+                    let has_multiple_subs = sys.links[first_sub].next_sub.is_some();
+                    let next_link = if has_multiple_subs {
+                        sys.stack.pop().unwrap()
+                    } else {
+                        first_sub
+                    };
+                    (first_sub, has_multiple_subs, next_link)
+                };
+                link = next_link;
 
                 if dirty {
-                    if Self::update(this.clone(), sub) {
+                    // update() runs the sub's getter (user code) — no borrow held.
+                    if Self::update(this, sub) {
                         if has_multiple_subs {
                             this.borrow_mut().shallow_propagate(first_sub);
                         }
-                        sub = this.borrow_mut().links[link].sub;
+                        sub = this.borrow().links[link].sub;
                         continue;
                     }
                     dirty = false;
@@ -181,8 +195,12 @@ impl super::ReactiveSystem {
                         .remove(ReactiveFlags::PENDING);
                 }
 
-                sub = this.borrow_mut().links[link].sub;
-                if let Some(next_dep) = this.borrow_mut().links[link].next_dep {
+                let (next_sub, next_dep) = {
+                    let sys = this.borrow();
+                    (sys.links[link].sub, sys.links[link].next_dep)
+                };
+                sub = next_sub;
+                if let Some(next_dep) = next_dep {
                     link = next_dep;
                     continue 'top;
                 }

@@ -46,34 +46,38 @@ impl super::ReactiveSystem {
     }
 
     /// Update a computed node and return whether it changed
-    pub fn update_computed(this: ReactiveSystemRef<Self>, node: NodeKey) -> bool {
+    pub fn update_computed(this: &ReactiveSystemRef<Self>, node: NodeKey) -> bool {
         this.borrow_mut().nodes[node].deps_tail = None;
-        let dirty = Self::update_computed_inner(this.clone(), node);
+        let dirty = Self::update_computed_inner(this, node);
         dirty
     }
 
-    pub fn update_computed_inner(this: ReactiveSystemRef<Self>, node: NodeKey) -> bool {
-        this.borrow_mut().cycle += 1;
-        this.borrow_mut().nodes[node].flags =
-            ReactiveFlags::MUTABLE | ReactiveFlags::RECURSED_CHECK;
-        let prev_sub = this.borrow_mut().set_active_sub(Some(node));
+    pub fn update_computed_inner(this: &ReactiveSystemRef<Self>, node: NodeKey) -> bool {
+        let prev_sub = {
+            let mut sys = this.borrow_mut();
+            sys.cycle += 1;
+            sys.nodes[node].flags = ReactiveFlags::MUTABLE | ReactiveFlags::RECURSED_CHECK;
+            sys.set_active_sub(Some(node))
+        };
 
         let inner = if let NodeInner::Computed(inner) = &this.borrow_mut().nodes[node].inner {
             Some(inner.clone())
         } else {
             None
         };
+        // Getter runs here (user code) — no system borrow held.
         let dirty = if let Some(inner) = inner {
             inner.borrow_mut().update()
         } else {
             false
         };
 
-        this.borrow_mut().nodes[node]
-            .flags
-            .remove(ReactiveFlags::RECURSED_CHECK);
-        this.borrow_mut().active_sub.set(prev_sub);
-        this.borrow_mut().purge_deps(node, false);
+        {
+            let mut sys = this.borrow_mut();
+            sys.nodes[node].flags.remove(ReactiveFlags::RECURSED_CHECK);
+            sys.active_sub.set(prev_sub);
+            sys.purge_deps(node, false);
+        }
 
         dirty
     }
@@ -86,7 +90,7 @@ impl super::ReactiveSystem {
 
     /// Update a node (computed or signal) and return whether it changed
     #[inline]
-    pub fn update(this: ReactiveSystemRef<Self>, node: NodeKey) -> bool {
+    pub fn update(this: &ReactiveSystemRef<Self>, node: NodeKey) -> bool {
         if this.borrow().nodes[node].deps_tail.is_some() {
             Self::update_computed(this, node)
         } else {
@@ -95,7 +99,7 @@ impl super::ReactiveSystem {
         }
     }
 
-    pub fn cleanup_scope(this: ReactiveSystemRef<Self>, node: NodeKey) {
+    pub fn cleanup_scope(this: &ReactiveSystemRef<Self>, node: NodeKey) {
         let mut current = this.borrow().nodes[node].child;
         while let Some(child) = current {
             current = this.borrow().nodes[child].next;
@@ -103,7 +107,7 @@ impl super::ReactiveSystem {
                 NodeInner::Effect(_) | NodeInner::None => true,
                 _ => false,
             } {
-                Self::cleanup_scope(this.clone(), child)
+                Self::cleanup_scope(this, child)
             }
         }
         if let Some(cleanups) = { this.borrow_mut().cleanups.remove(node) } {
@@ -159,20 +163,20 @@ impl super::ReactiveSystem {
     }
 
     /// Fully dispose a node (cleanup and remove)
-    pub fn dispose_scope(this: ReactiveSystemRef<Self>, node: NodeKey) {
+    pub fn dispose_scope(this: &ReactiveSystemRef<Self>, node: NodeKey) {
         if !this.borrow().nodes.contains_key(node) {
             return;
         }
-        Self::cleanup_scope(this.clone(), node);
+        Self::cleanup_scope(this, node);
         this.borrow_mut().purge_scope(node);
         this.borrow_mut().unlink_child(node);
         this.borrow_mut().contexts.remove(node);
         this.borrow_mut().nodes.remove(node);
     }
 
-    pub fn cleanup(this: ReactiveSystemRef<Self>) {
+    pub fn cleanup(this: &ReactiveSystemRef<Self>) {
         let node = this.borrow().root;
-        Self::cleanup_scope(this.clone(), node);
+        Self::cleanup_scope(this, node);
         this.borrow_mut().purge_scope(node);
         this.borrow_mut().unlink_child(node);
     }

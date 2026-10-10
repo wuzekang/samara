@@ -3,7 +3,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 #[test]
-#[should_panic]
+#[should_panic(expected = "Signal accessed after cleanup")]
 fn test_read_guard_after_cleanup() {
     let s = Rc::new(RefCell::new(None));
 
@@ -19,12 +19,12 @@ fn test_read_guard_after_cleanup() {
 
     scope.dispose(); // Cleanup scope and its signals
 
-    // Now accessing the guard should panic
-    // let _x = *g; // This should panic with "Signal accessed after cleanup"
+    // Accessing the guard should panic; dropping it afterwards must not
+    let _x = *g;
 }
 
 #[test]
-#[should_panic]
+#[should_panic(expected = "Signal accessed after cleanup")]
 fn test_write_guard_after_cleanup() {
     let s = Rc::new(RefCell::new(None));
 
@@ -40,8 +40,7 @@ fn test_write_guard_after_cleanup() {
 
     scope.dispose(); // Cleanup scope and its signals
 
-    // Now accessing the guard should panic
-    // g.push(4); // This should panic with "Signal accessed after cleanup"
+    g.push(4);
 }
 
 #[test]

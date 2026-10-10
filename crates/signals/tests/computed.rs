@@ -230,3 +230,45 @@ fn test_computed_diamond_effect() {
     src.set(2);
     assert_eq!(*c.borrow(), 3);
 }
+
+#[test]
+fn test_peek_on_uninitialized_memo() {
+    let s = signal(2i32);
+    let m = memo(move || s.get() * 2);
+    // 未曾读取过的 memo 直接 peek,应惰性求值而不是 panic
+    assert_eq!(*m.peek(), 4);
+}
+
+#[test]
+fn test_peek_on_uninitialized_computed() {
+    let s = signal(2i32);
+    let c = computed(move |prev: Option<i32>| prev.unwrap_or(0) + s.get());
+    assert_eq!(*c.peek(), 2);
+}
+
+#[test]
+fn test_peek_returns_fresh_value() {
+    let s = signal(1i32);
+    let c = memo(move || s.get() * 2);
+
+    assert_eq!(*c.peek(), 2);
+    s.set(5);
+    assert_eq!(*c.peek(), 10); // 脏了之后 peek 拿到的是重算后的当前值
+}
+
+#[test]
+fn test_peek_does_not_track() {
+    let s = signal(0i32);
+    let c = memo(move || s.get() * 2);
+
+    let runs = Rc::new(RefCell::new(0i32));
+    let runs_for_closure = runs.clone();
+    let _e = effect(move || {
+        *runs_for_closure.borrow_mut() += 1;
+        c.peek();
+    });
+
+    assert_eq!(*runs.borrow(), 1);
+    s.set(1);
+    assert_eq!(*runs.borrow(), 1); // peek 不追踪,effect 不应重跑
+}

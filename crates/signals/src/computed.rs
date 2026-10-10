@@ -44,7 +44,14 @@ impl<T: 'static> Computed<T> {
         ComputedRef::new(self.node)
     }
 
+    /// Read the current value without subscribing to it.
+    ///
+    /// Lazily evaluates the computed on first access and refreshes it if
+    /// dirty; no dependency is recorded on the active subscriber.
     pub fn peek(&self) -> ComputedRef<'_, T> {
+        REACTIVE_SYSTEM.with(|ctx| {
+            ctx.computed_peek(self.node);
+        });
         ComputedRef::new(self.node)
     }
 }
@@ -100,17 +107,29 @@ impl<T> ComputedRef<'_, T> {
     }
 }
 
-impl<T> Deref for ComputedRef<'_, T> {
+impl<T: 'static> Deref for ComputedRef<'_, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
         let value = REACTIVE_SYSTEM.with(|ctx| {
-            if let NodeInner::Computed(inner) = &ctx.inner.borrow().nodes[self.node].inner {
-                unsafe { &*(inner.borrow().as_any() as *const dyn std::any::Any as *const T) }
+            if let NodeInner::Computed(inner) = &ctx
+                .inner
+                .borrow()
+                .nodes
+                .get(self.node)
+                .expect("Computed accessed after cleanup")
+                .inner
+            {
+                let guard = inner.borrow();
+                guard
+                    .value_any()
+                    .downcast_ref::<T>()
+                    .map(|v| v as *const T)
+                    .expect("Computed type mismatch")
             } else {
                 panic!("Node is not a Computed");
             }
         });
-        unsafe { &*(value as *const T) }
+        unsafe { &*value }
     }
 }
