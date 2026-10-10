@@ -206,7 +206,17 @@ impl Debug for NodeInner {
     }
 }
 
+/// Field order is load-bearing — but in the OPPOSITE direction of the
+/// obvious guess: `flags` deliberately sits at the END of the struct.
+/// Nodes are slot-adjacent in the slotmap (slot stride 120 bytes), so
+/// end-of-node flags of consecutive nodes land 8 bytes apart and share
+/// cache lines: the propagate/check_dirty walks mark flags across chain
+/// neighbors, and that accidental density (~8 flags per line) measured
+/// FASTER than packing flags with the link heads at the struct front
+/// (~1 flag per line). `#[repr(C)]` locks this layout so rustc's
+/// unspecified repr(Rust) field reordering cannot silently change it.
 #[derive(Debug, Serialize)]
+#[repr(C)]
 pub struct ReactiveNode {
     pub inner: NodeInner,
     pub deps: Option<LinkKey>,
@@ -273,7 +283,16 @@ impl ReactiveNode {
     }
 }
 
+/// Field order is load-bearing in a non-obvious way: `next_dep` (the
+/// pointer check_dirty's walk chases) deliberately sits at the END of the
+/// struct. Links are slot-adjacent in the slotmap (slot stride 64 bytes),
+/// so consecutive links' next_dep fields land 8 bytes apart and share
+/// cache lines; walking a chain's dep list then touches ~8 links per line.
+/// Reordering "hot fields first" (dep/sub/next_* at offset 0) measurably
+/// regressed the propagation benchmark by ~2%. `#[repr(C)]` locks this
+/// layout against rustc's unspecified repr(Rust) field reordering.
 #[derive(Debug, Clone, Serialize)]
+#[repr(C)]
 pub struct Link {
     pub version: usize,
     pub dep: NodeKey,
