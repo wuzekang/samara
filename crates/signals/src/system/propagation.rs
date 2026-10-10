@@ -120,14 +120,18 @@ impl super::ReactiveSystem {
         let mut dirty = false;
         this.borrow_mut().stack.clear();
         'top: loop {
-            // Read phase: one guard covers all flag/link reads of this step.
-            let (dep, dep_flags, sub_dirty) = {
+            // Read phase: one guard covers this step's reads, including
+            // next_dep. next_dep stays valid only while no getter has run
+            // since it was read; the MUTABLE|DIRTY branch may run one and
+            // must re-read it.
+            let (dep, dep_flags, sub_dirty, mut next_dep) = {
                 let sys = this.borrow();
                 let dep = sys.links[link].dep;
                 (
                     dep,
                     sys.nodes[dep].flags,
                     sys.nodes[sub].flags.contains(ReactiveFlags::DIRTY),
+                    sys.links[link].next_dep,
                 )
             };
 
@@ -142,6 +146,10 @@ impl super::ReactiveSystem {
                         sys.shallow_propagate(subs);
                     }
                     dirty = true;
+                } else {
+                    // The getter ran: the dep chain may have been re-linked,
+                    // so refresh next_dep instead of using the stale read.
+                    next_dep = this.borrow().links[link].next_dep;
                 }
             } else if dep_flags.contains(ReactiveFlags::MUTABLE | ReactiveFlags::PENDING) {
                 link = {
@@ -157,7 +165,6 @@ impl super::ReactiveSystem {
             }
 
             if !dirty {
-                let next_dep = this.borrow().links[link].next_dep;
                 if let Some(next_dep) = next_dep {
                     link = next_dep;
                     continue 'top;
