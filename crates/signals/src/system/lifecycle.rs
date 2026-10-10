@@ -53,29 +53,44 @@ impl super::ReactiveSystem {
     }
 
     pub fn update_computed_inner(this: &ReactiveSystemRef<Self>, node: NodeKey) -> bool {
-        let prev_sub = {
+        let (prev_sub, taken) = {
             let mut sys = this.borrow_mut();
             sys.cycle += 1;
-            sys.nodes[node].flags = ReactiveFlags::MUTABLE | ReactiveFlags::RECURSED_CHECK;
-            sys.set_active_sub(Some(node))
+            let prev_sub = sys.set_active_sub(Some(node));
+            let mut taken = None;
+            if let Some(n) = sys.nodes.get_mut(node) {
+                // RECURSED_CHECK at entry means an update of this node is
+                // already in flight (its getter is on the stack): a cycle.
+                if n.flags.contains(ReactiveFlags::RECURSED_CHECK) {
+                    panic!("Computed re-entered recursively");
+                }
+                n.flags = ReactiveFlags::MUTABLE | ReactiveFlags::RECURSED_CHECK;
+                // Swap the getter storage out so the call below runs with no
+                // system borrow held (user code may re-enter freely). While
+                // the getter runs, inner is None: a recursive read of this
+                // computed panics ("Node is not a Computed") instead of
+                // aliasing the in-flight update.
+                taken = n.take_computed();
+            }
+            (prev_sub, taken)
         };
 
-        let inner = if let NodeInner::Computed(inner) = &this.borrow_mut().nodes[node].inner {
-            Some(inner.clone())
-        } else {
-            None
-        };
-        // Getter runs here (user code) — no system borrow held.
-        let dirty = if let Some(inner) = inner {
-            inner.borrow_mut().update()
-        } else {
-            false
+        let dirty = match &taken {
+            Some(inner) => inner.borrow_mut().update(),
+            None => false,
         };
 
         {
             let mut sys = this.borrow_mut();
-            sys.nodes[node].flags.remove(ReactiveFlags::RECURSED_CHECK);
             sys.active_sub.set(prev_sub);
+            if let Some(n) = sys.nodes.get_mut(node) {
+                if let Some(inner) = taken {
+                    n.inner = NodeInner::Computed(inner);
+                }
+                n.flags.remove(ReactiveFlags::RECURSED_CHECK);
+            }
+            // else: the getter disposed this node's scope; `taken` still
+            // owns the getter and frees it when dropped at block end.
             sys.purge_deps(node, false);
         }
 

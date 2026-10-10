@@ -1,6 +1,5 @@
 use ::slotmap::new_key_type;
 use serde::Serialize;
-use std::rc::Rc;
 use std::{any::Any, cell::Cell, fmt::Debug};
 
 mod refcell;
@@ -170,12 +169,12 @@ impl SignalNode {
 }
 
 pub struct EffectNode {
-    pub effect: Rc<RefCell<dyn FnMut()>>,
+    pub effect: Box<RefCell<dyn FnMut()>>,
 }
 
 pub enum NodeInner {
     Effect(EffectNode),
-    Computed(Rc<RefCell<dyn ComputedOps>>),
+    Computed(Box<RefCell<dyn ComputedOps>>),
     Signal(SignalNode),
     None,
 }
@@ -243,6 +242,33 @@ impl ReactiveNode {
             next: None,
             prev: None,
             caller,
+        }
+    }
+
+    /// Swap the effect closure out, leaving `NodeInner::None` in its place.
+    /// The caller must restore it or let it drop (if the node dies during
+    /// the callback, the Box owns and frees the closure). Panics on
+    /// recursive re-entry — the in-flight borrow would otherwise alias.
+    pub(crate) fn take_effect(&mut self) -> Option<Box<RefCell<dyn FnMut()>>> {
+        match std::mem::replace(&mut self.inner, NodeInner::None) {
+            NodeInner::Effect(EffectNode { effect }) => Some(effect),
+            NodeInner::None => panic!("Effect re-entered recursively"),
+            other => {
+                self.inner = other;
+                None
+            }
+        }
+    }
+
+    /// Swap the computed getter storage out, leaving `NodeInner::None`.
+    /// Same contract as `take_effect`.
+    pub(crate) fn take_computed(&mut self) -> Option<Box<RefCell<dyn ComputedOps>>> {
+        match std::mem::replace(&mut self.inner, NodeInner::None) {
+            NodeInner::Computed(inner) => Some(inner),
+            other => {
+                self.inner = other;
+                None
+            }
         }
     }
 }

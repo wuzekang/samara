@@ -3,7 +3,6 @@ use crate::types::{
     ComputedNodeInner, ComputedOps, MemoNodeInner, NodeInner, NodeKey, ReactiveFlags, ReactiveNode,
 };
 use crate::types::{Location, RefCell};
-use std::rc::Rc;
 
 impl super::ReactiveSystem {
     /// Create a new memo node (with equality check)
@@ -12,7 +11,8 @@ impl super::ReactiveSystem {
         F: Fn() -> T + 'static,
         T: PartialEq + 'static,
     {
-        let inner = Rc::new(RefCell::new(MemoNodeInner::new(Box::new(getter))));
+        let inner: Box<RefCell<dyn ComputedOps>> =
+            Box::new(RefCell::new(MemoNodeInner::new(Box::new(getter))));
 
         let node = self.nodes.insert(ReactiveNode::new(
             NodeInner::Computed(inner),
@@ -30,10 +30,11 @@ impl super::ReactiveSystem {
         F: Fn(Option<T>) -> T + 'static,
         T: 'static,
     {
-        let inner = Rc::new(RefCell::new(ComputedNodeInner::new(Box::new(getter))));
+        let inner: Box<RefCell<dyn ComputedOps>> =
+            Box::new(RefCell::new(ComputedNodeInner::new(Box::new(getter))));
 
         let node = self.nodes.insert(ReactiveNode::new(
-            NodeInner::Computed(inner as Rc<RefCell<dyn ComputedOps>>),
+            NodeInner::Computed(inner),
             ReactiveFlags::NONE,
             Some(self.current_scope.get()),
             caller,

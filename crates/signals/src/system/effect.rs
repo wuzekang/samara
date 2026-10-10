@@ -1,7 +1,6 @@
 use crate::system::ReactiveSystemRef;
 use crate::types::{EffectNode, Link, NodeInner, NodeKey, ReactiveFlags, ReactiveNode};
 use crate::types::{Location, RefCell};
-use std::rc::Rc;
 
 impl super::ReactiveSystem {
     /// Create a new effect node
@@ -10,45 +9,52 @@ impl super::ReactiveSystem {
         effect: F,
         caller: Location,
     ) -> NodeKey {
-        let effect = Rc::new(RefCell::new(effect));
+        // The closure stays local for the initial run; the node is created
+        // with inner == None and receives it afterwards, so the initial run
+        // needs no take/restore round-trip at all.
+        let effect: Box<RefCell<F>> = Box::new(RefCell::new(effect));
 
         let (prev_scope, prev_sub, node) = {
-            let mut this = this.borrow_mut();
-            let parent_scope = this.current_scope.get();
+            let mut sys = this.borrow_mut();
+            let parent_scope = sys.current_scope.get();
 
             // Create ONE node that is both the effect AND its scope
-            let node = this.nodes.insert(ReactiveNode::new(
-                NodeInner::Effect(EffectNode {
-                    effect: effect.clone(),
-                }),
+            let node = sys.nodes.insert(ReactiveNode::new(
+                NodeInner::None,
                 ReactiveFlags::WATCHING | ReactiveFlags::RECURSED_CHECK,
                 Some(parent_scope),
                 caller,
             ));
 
             // Link this effect/scope node to parent's children list
-            this.link_child(node);
+            sys.link_child(node);
 
-            let prev_sub = this.set_active_sub(Some(node));
+            let prev_sub = sys.set_active_sub(Some(node));
             if let Some(prev_sub) = prev_sub {
-                this.link(node, prev_sub, 0);
+                sys.link(node, prev_sub, 0);
             }
 
             // Set this node as current scope during effect execution
-            let prev_scope = this.current_scope.get();
-            this.current_scope.set(node);
+            let prev_scope = sys.current_scope.get();
+            sys.current_scope.set(node);
 
             (prev_scope, prev_sub, node)
         };
 
+        // Initial run: user code — no system borrow held.
         (effect.borrow_mut())();
 
-        let mut this = this.borrow_mut();
-
-        // Restore parent scope
-        this.current_scope.set(prev_scope);
-        this.active_sub.set(prev_sub);
-        this.nodes[node].flags.remove(ReactiveFlags::RECURSED_CHECK);
+        {
+            let mut sys = this.borrow_mut();
+            sys.current_scope.set(prev_scope);
+            sys.active_sub.set(prev_sub);
+            if let Some(n) = sys.nodes.get_mut(node) {
+                n.inner = NodeInner::Effect(EffectNode { effect });
+                n.flags.remove(ReactiveFlags::RECURSED_CHECK);
+            }
+            // else: the effect disposed itself during the initial run;
+            // `effect` frees the closure when dropped.
+        }
         node
     }
 
@@ -124,6 +130,12 @@ impl super::ReactiveSystem {
         {
             {
                 let mut sys = this.borrow_mut();
+                // The effect may have been disposed inside check_dirty's
+                // getters (user code) — bail out instead of touching a
+                // removed slot.
+                if !sys.nodes.contains_key(node) {
+                    return;
+                }
                 sys.cycle += 1;
                 sys.nodes[node].deps_tail = None;
                 sys.nodes[node].flags = ReactiveFlags::WATCHING | ReactiveFlags::RECURSED_CHECK;
@@ -134,25 +146,26 @@ impl super::ReactiveSystem {
 
             // Clean up children from previous execution
             // This prevents memory leaks when effects run multiple times
-            let (effect, prev_scope, prev_sub) = {
+            let (taken, prev_scope, prev_sub) = {
                 let mut sys = this.borrow_mut();
                 sys.purge_child(node);
-                let effect = if let NodeInner::Effect(EffectNode { effect }) = &sys.nodes[node]
-                    .inner
-                {
-                    Some(effect.clone())
-                } else {
-                    None
-                };
+                // Swap the closure out so the body runs with no system
+                // borrow held; it goes back after the call. A re-entrant
+                // run of the same effect finds inner == None and panics
+                // instead of aliasing the in-flight borrow.
+                let mut taken = None;
+                if let Some(n) = sys.nodes.get_mut(node) {
+                    taken = n.take_effect();
+                }
                 let prev_sub = sys.set_active_sub(Some(node));
                 // Set this node as current scope during effect execution
                 let prev_scope = sys.current_scope.get();
                 sys.current_scope.set(node);
-                (effect, prev_scope, prev_sub)
+                (taken, prev_scope, prev_sub)
             };
 
             // Effect body runs here (user code) — no system borrow held.
-            if let Some(effect) = effect {
+            if let Some(effect) = &taken {
                 (effect.borrow_mut())();
             }
 
@@ -161,7 +174,13 @@ impl super::ReactiveSystem {
                 let mut sys = this.borrow_mut();
                 sys.current_scope.set(prev_scope);
                 sys.active_sub.set(prev_sub);
-                sys.nodes[node].flags.remove(ReactiveFlags::RECURSED_CHECK);
+                if let Some(n) = sys.nodes.get_mut(node) {
+                    if let Some(effect) = taken {
+                        n.inner = NodeInner::Effect(EffectNode { effect });
+                    }
+                    n.flags.remove(ReactiveFlags::RECURSED_CHECK);
+                }
+                // else: the effect disposed itself; `taken` frees the closure.
                 sys.purge_deps(node, false);
             }
         } else {
