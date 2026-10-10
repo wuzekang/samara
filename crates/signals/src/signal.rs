@@ -37,10 +37,7 @@ impl AddAssign<i32> for Signal<i32> {
 
 impl<T: 'static + Clone> Signal<T> {
     pub fn get(&self) -> T {
-        REACTIVE_SYSTEM.with(|ctx| {
-            ctx.signal_track(self.node);
-            ctx.signal_get::<T>(self.node)
-        })
+        REACTIVE_SYSTEM.with(|ctx| ctx.signal_get_tracked::<T>(self.node))
     }
 
     pub fn get_untracked(&self) -> T {

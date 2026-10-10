@@ -162,6 +162,11 @@ impl ReactiveRuntime {
     }
 
     #[inline]
+    pub fn signal_get_tracked<T: 'static + Clone>(&self, node: NodeKey) -> T {
+        self.inner.borrow_mut().signal_get_tracked(node)
+    }
+
+    #[inline]
     pub fn signal_notify(&self, node: NodeKey) {
         ReactiveSystem::signal_notify(&self.inner, node);
     }
