@@ -47,17 +47,6 @@ where
     serializer.serialize_tuple(0)?.end()
 }
 
-/// An enumeration of values returned from the `state` method on a `RefCell<T>`.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum BorrowState {
-    /// The cell is currently being read, there is at least one active `borrow`.
-    Reading,
-    /// The cell is currently being written to, there is an active `borrow_mut`.
-    Writing,
-    /// There are no outstanding borrows on this cell.
-    Unused,
-}
-
 // Values [1, MAX-1] represent the number of `Ref` active
 // (will not outgrow its range since `usize` is the size of the address space)
 struct BorrowFlag {
@@ -77,12 +66,6 @@ impl<T> RefCell<T> {
             borrow: BorrowFlag::new(),
             value: UnsafeCell::new(value),
         }
-    }
-
-    /// Consumes the `RefCell`, returning the wrapped value.
-    pub fn into_inner(self) -> T {
-        debug_assert!(self.borrow.flag.get() == UNUSED);
-        unsafe { self.value.into_inner() }
     }
 }
 
