@@ -22,6 +22,11 @@ impl ReactiveFlags {
     pub const RECURSED: Self = Self(0b0000_1000);
     pub const DIRTY: Self = Self(0b0001_0000);
     pub const PENDING: Self = Self(0b0010_0000);
+    /// Opt-in: re-run this effect until the graph settles when it writes a
+    /// signal it depends on (cascade to fixpoint). Upstream alien-signals
+    /// defers such invalidation instead; UI frameworks that expect writes
+    /// inside effects to settle synchronously want this.
+    pub const CASCADE: Self = Self(0b0100_0000);
 
     #[inline]
     pub fn remove(&mut self, other: Self) {

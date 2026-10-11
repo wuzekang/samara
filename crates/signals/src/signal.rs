@@ -54,8 +54,31 @@ impl<T: 'static> Signal<T> {
         }
     }
 
+    /// The raw node key identifying this signal.
+    pub fn key(&self) -> NodeKey {
+        self.node
+    }
+
+    /// Whether this signal's node is still alive (not disposed with its
+    /// owning scope).
+    pub fn exists(&self) -> bool {
+        REACTIVE_SYSTEM.with(|ctx| ctx.node_exists(self.node))
+    }
+
     pub fn set(&self, value: T) {
         REACTIVE_SYSTEM.with(move |ctx| ctx.signal_set::<T>(self.node, value));
+    }
+
+    /// Overwrite the value WITHOUT notifying subscribers. Dependents keep
+    /// stale results until something else invalidates them.
+    pub fn set_silent(&self, value: T) {
+        REACTIVE_SYSTEM.with(move |ctx| ctx.signal_set_silent::<T>(self.node, value));
+    }
+
+    /// Location where this signal was created (`#[track_caller]` of
+    /// [`signal`]).
+    pub fn created_at(&self) -> Location {
+        REACTIVE_SYSTEM.with(|ctx| ctx.node_caller(self.node))
     }
 
     pub fn track(&self) {
@@ -163,6 +186,19 @@ impl<T> SignalReadGuard<'_, T> {
 
             // Track dependencies
             ctx.signal_track(node);
+        });
+        Self {
+            node,
+            _marker: PhantomData,
+        }
+    }
+
+    /// Borrow-checks without registering a dependency: the guard form of
+    /// [`Signal::peek`]. Reads through the returned guard do not subscribe
+    /// the current effect to this signal.
+    pub fn new_untracked(node: NodeKey) -> Self {
+        REACTIVE_SYSTEM.with(|ctx| {
+            ctx.signal_borrow_read_check(node);
         });
         Self {
             node,

@@ -134,6 +134,12 @@ pub fn has_context<T: 'static>() -> bool {
     REACTIVE_SYSTEM.with(|ctx| ctx.has_context::<T>())
 }
 
+/// Check whether the current scope ITSELF provides a context of this type,
+/// without walking to parents.
+pub fn has_local_context<T: 'static>() -> bool {
+    REACTIVE_SYSTEM.with(|ctx| ctx.has_local_context::<T>())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

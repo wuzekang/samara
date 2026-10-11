@@ -6,9 +6,46 @@ pub struct Scope {
     node: NodeKey,
 }
 
+impl std::fmt::Debug for Scope {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Scope").field("node", &self.node).finish()
+    }
+}
+
+impl PartialEq for Scope {
+    fn eq(&self, other: &Self) -> bool {
+        self.node == other.node
+    }
+}
+
+impl Eq for Scope {}
+
+impl PartialOrd for Scope {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Scope {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.node.cmp(&other.node)
+    }
+}
+
+impl std::hash::Hash for Scope {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.node.hash(state);
+    }
+}
+
 impl Scope {
     pub fn new(node: NodeKey) -> Self {
         Self { node }
+    }
+
+    /// The raw node key identifying this scope.
+    pub fn key(&self) -> NodeKey {
+        self.node
     }
 
     pub fn run<F: FnOnce() + 'static>(f: F, caller: Location) -> Self {
@@ -27,6 +64,17 @@ pub fn cleanup() {
     REACTIVE_SYSTEM.with(|ctx| {
         ctx.cleanup();
     })
+}
+
+/// Returns the scope current at this moment (the innermost scope or effect
+/// being executed). Outside any reactive execution this is the root scope.
+pub fn current_scope() -> Scope {
+    REACTIVE_SYSTEM.with(|ctx| Scope::new(ctx.current_scope()))
+}
+
+/// The root scope every other scope descends from.
+pub fn root_scope() -> Scope {
+    REACTIVE_SYSTEM.with(|ctx| Scope::new(ctx.root()))
 }
 
 /// Creates a new scope and executes a function within it.

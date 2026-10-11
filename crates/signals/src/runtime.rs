@@ -37,8 +37,17 @@ impl ReactiveRuntime {
     }
 
     #[inline]
+    pub fn has_local_context<T: 'static>(&self) -> bool {
+        self.inner.borrow().has_local_context::<T>()
+    }
+
+    #[inline]
     pub fn new_effect<F: FnMut() + 'static>(&self, effect: F, caller: Location) -> NodeKey {
         ReactiveSystem::new_effect(&self.inner, effect, caller)
+    }
+
+    pub fn new_effect_cascade<F: FnMut() + 'static>(&self, effect: F, caller: Location) -> NodeKey {
+        ReactiveSystem::new_effect_cascade(&self.inner, effect, caller)
     }
 
     #[inline]
@@ -172,6 +181,15 @@ impl ReactiveRuntime {
     }
 
     #[inline]
+    pub fn signal_set_silent<T: 'static>(&self, node: NodeKey, value: T) {
+        ReactiveSystem::signal_set_silent(&self.inner, node, value);
+    }
+
+    /// Location where the given node was created.
+    pub fn node_caller(&self, node: NodeKey) -> crate::types::Location {
+        self.inner.borrow().nodes[node].caller
+    }
+
     pub fn signal_set<T: 'static>(&self, node: NodeKey, value: T) {
         ReactiveSystem::signal_set(&self.inner, node, value);
     }
@@ -257,6 +275,12 @@ impl ReactiveRuntime {
     #[inline]
     pub fn set_current_scope(&self, scope: NodeKey) {
         self.inner.borrow().current_scope.set(scope);
+    }
+
+    #[inline]
+    /// The root scope node every other node descends from.
+    pub fn root(&self) -> NodeKey {
+        self.inner.borrow().root
     }
 
     #[inline]

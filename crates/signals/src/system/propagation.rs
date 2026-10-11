@@ -65,7 +65,9 @@ impl super::ReactiveSystem {
                     | ReactiveFlags::PENDING,
             )) {
                 sub.flags = flags | ReactiveFlags::PENDING;
-            } else if !(flags.contains(ReactiveFlags::RECURSED_CHECK | ReactiveFlags::RECURSED)) {
+            } else if !(flags.intersects(
+                ReactiveFlags::RECURSED_CHECK | ReactiveFlags::RECURSED,
+            )) {
                 flags = ReactiveFlags::NONE;
             } else if !(flags.contains(ReactiveFlags::RECURSED_CHECK)) {
                 sub.flags = (flags & (!ReactiveFlags::RECURSED)) | ReactiveFlags::PENDING;

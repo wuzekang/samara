@@ -108,4 +108,13 @@ impl ReactiveSystem {
             }
         }
     }
+
+    /// Check whether the CURRENT scope itself provides a context of this
+    /// type — no parent lookup. Distinguishes "provided here" from
+    /// "inherited".
+    pub fn has_local_context<T: 'static>(&self) -> bool {
+        self.contexts
+            .get(self.current_scope.get())
+            .is_some_and(|contexts| contexts.contains_key(&TypeId::of::<T>()))
+    }
 }

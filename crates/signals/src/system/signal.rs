@@ -149,6 +149,20 @@ impl super::ReactiveSystem {
         }
     }
 
+    /// Set a signal value WITHOUT notifying subscribers: dependents keep
+    /// their stale results until something else invalidates them. Meant for
+    /// internal bookkeeping that must not trigger effects.
+    pub fn signal_set_silent<T: 'static>(this: &ReactiveSystemRef<Self>, node: NodeKey, value: T) {
+        let mut sys = this.borrow_mut();
+        let signal = sys.signal(node);
+        signal.borrow_write_check();
+        *signal
+            .value
+            .downcast_mut::<T>()
+            .expect("Signal type mismatch") = value;
+        signal.release_write();
+    }
+
     /// Set a signal value
     #[inline]
     pub fn signal_set<T: 'static>(this: &ReactiveSystemRef<Self>, node: NodeKey, value: T) {

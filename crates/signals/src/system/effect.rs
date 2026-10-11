@@ -9,6 +9,25 @@ impl super::ReactiveSystem {
         effect: F,
         caller: Location,
     ) -> NodeKey {
+        Self::new_effect_inner(this, effect, caller, ReactiveFlags::NONE)
+    }
+
+    /// Like [`new_effect`], but the effect re-runs until the graph settles
+    /// when its body writes a signal it depends on.
+    pub fn new_effect_cascade<F: FnMut() + 'static>(
+        this: &ReactiveSystemRef<Self>,
+        effect: F,
+        caller: Location,
+    ) -> NodeKey {
+        Self::new_effect_inner(this, effect, caller, ReactiveFlags::CASCADE)
+    }
+
+    fn new_effect_inner<F: FnMut() + 'static>(
+        this: &ReactiveSystemRef<Self>,
+        effect: F,
+        caller: Location,
+        extra_flags: ReactiveFlags,
+    ) -> NodeKey {
         // The closure stays local for the initial run; the node is created
         // with inner == None and receives it afterwards, so the initial run
         // needs no take/restore round-trip at all.
@@ -21,7 +40,7 @@ impl super::ReactiveSystem {
             // Create ONE node that is both the effect AND its scope
             let node = sys.nodes.insert(ReactiveNode::new(
                 NodeInner::None,
-                ReactiveFlags::WATCHING | ReactiveFlags::RECURSED_CHECK,
+                ReactiveFlags::WATCHING | ReactiveFlags::RECURSED_CHECK | extra_flags,
                 Some(parent_scope),
                 caller,
             ));
@@ -54,6 +73,24 @@ impl super::ReactiveSystem {
             }
             // else: the effect disposed itself during the initial run;
             // `effect` frees the closure when dropped.
+        }
+
+        // Self-recursion (opt-in CASCADE): the initial body wrote a signal
+        // this effect depends on — continue running until the graph settles.
+        if this.borrow().nodes.get(node).is_some_and(|n| {
+            n.flags
+                .contains(ReactiveFlags::RECURSED | ReactiveFlags::CASCADE)
+        }) {
+            {
+                let mut sys = this.borrow_mut();
+                if let Some(n) = sys.nodes.get_mut(node) {
+                    n.flags = ReactiveFlags::DIRTY
+                        | ReactiveFlags::WATCHING
+                        | ReactiveFlags::RECURSED_CHECK
+                        | ReactiveFlags::CASCADE;
+                }
+            }
+            Self::run(this, node);
         }
         node
     }
@@ -117,18 +154,19 @@ impl super::ReactiveSystem {
 
     /// Run an effect
     pub fn run(this: &ReactiveSystemRef<Self>, node: NodeKey) {
-        let flags_deps = {
-            let sys = this.borrow();
-            sys.nodes.get(node).map(|item| (item.flags, item.deps))
-        };
-        let Some((flags, deps)) = flags_deps else {
-            return;
-        };
-        if flags.contains(ReactiveFlags::DIRTY)
-            || (flags.contains(ReactiveFlags::PENDING)
-                && Self::check_dirty(this, deps.unwrap(), node))
-        {
+        loop {
+            let flags_deps = {
+                let sys = this.borrow();
+                sys.nodes.get(node).map(|item| (item.flags, item.deps))
+            };
+            let Some((flags, deps)) = flags_deps else {
+                return;
+            };
+            if flags.contains(ReactiveFlags::DIRTY)
+                || (flags.contains(ReactiveFlags::PENDING)
+                    && Self::check_dirty(this, deps.unwrap(), node))
             {
+            let taken = {
                 let mut sys = this.borrow_mut();
                 // The effect may have been disposed inside check_dirty's
                 // getters (user code) — bail out instead of touching a
@@ -136,10 +174,24 @@ impl super::ReactiveSystem {
                 if !sys.nodes.contains_key(node) {
                     return;
                 }
+                // Grab the closure FIRST: a nested flush may re-enter this
+                // node while its body is in flight (inner == None). Skip in
+                // that case — the in-flight run settles the pending state.
+                let mut taken = None;
+                if let Some(n) = sys.nodes.get_mut(node) {
+                    taken = n.take_effect();
+                }
+                let Some(effect) = taken else {
+                    return;
+                };
                 sys.cycle += 1;
                 sys.nodes[node].deps_tail = None;
-                sys.nodes[node].flags = ReactiveFlags::WATCHING | ReactiveFlags::RECURSED_CHECK;
-            }
+                // Preserve opt-in flags (CASCADE) across re-runs.
+                sys.nodes[node].flags = ReactiveFlags::WATCHING
+                    | ReactiveFlags::RECURSED_CHECK
+                    | (sys.nodes[node].flags & ReactiveFlags::CASCADE);
+                Some(effect)
+            };
 
             // cleanup_scope runs user cleanup callbacks — no borrow held inside.
             Self::cleanup_scope(this, node);
@@ -149,14 +201,6 @@ impl super::ReactiveSystem {
             let (taken, prev_scope, prev_sub) = {
                 let mut sys = this.borrow_mut();
                 sys.purge_child(node);
-                // Swap the closure out so the body runs with no system
-                // borrow held; it goes back after the call. A re-entrant
-                // run of the same effect finds inner == None and panics
-                // instead of aliasing the in-flight borrow.
-                let mut taken = None;
-                if let Some(n) = sys.nodes.get_mut(node) {
-                    taken = n.take_effect();
-                }
                 let prev_sub = sys.set_active_sub(Some(node));
                 // Set this node as current scope during effect execution
                 let prev_scope = sys.current_scope.get();
@@ -183,8 +227,36 @@ impl super::ReactiveSystem {
                 // else: the effect disposed itself; `taken` frees the closure.
                 sys.purge_deps(node, false);
             }
+
+            // Self-recursion (opt-in CASCADE): the body wrote a signal this
+            // effect depends on (flagged RECURSED during propagation). Run
+            // again until the graph settles.
+            let recursed = {
+                let mut sys = this.borrow_mut();
+                match sys.nodes.get_mut(node) {
+                    Some(n)
+                        if n.flags
+                            .contains(ReactiveFlags::RECURSED | ReactiveFlags::CASCADE) =>
+                    {
+                        n.flags = ReactiveFlags::DIRTY
+                            | ReactiveFlags::WATCHING
+                            | ReactiveFlags::RECURSED_CHECK
+                            | ReactiveFlags::CASCADE;
+                        true
+                    }
+                    _ => false,
+                }
+            };
+            if recursed {
+                continue;
+            }
+            return;
         } else {
-            this.borrow_mut().nodes[node].flags = ReactiveFlags::WATCHING;
+            let mut sys = this.borrow_mut();
+            sys.nodes[node].flags =
+                ReactiveFlags::WATCHING | (sys.nodes[node].flags & ReactiveFlags::CASCADE);
+            return;
+        }
         }
     }
 

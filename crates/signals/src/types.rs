@@ -257,12 +257,14 @@ impl ReactiveNode {
 
     /// Swap the effect closure out, leaving `NodeInner::None` in its place.
     /// The caller must restore it or let it drop (if the node dies during
-    /// the callback, the Box owns and frees the closure). Panics on
-    /// recursive re-entry — the in-flight borrow would otherwise alias.
+    /// the callback, the Box owns and frees the closure). Returns `None`
+    /// when the closure is already swapped out (re-entrant run) or the node
+    /// is not an effect — callers treat it as "skip; the in-flight run
+    /// settles the state".
     pub(crate) fn take_effect(&mut self) -> Option<Box<RefCell<dyn FnMut()>>> {
         match std::mem::replace(&mut self.inner, NodeInner::None) {
             NodeInner::Effect(EffectNode { effect }) => Some(effect),
-            NodeInner::None => panic!("Effect re-entered recursively"),
+            NodeInner::None => None,
             other => {
                 self.inner = other;
                 None
